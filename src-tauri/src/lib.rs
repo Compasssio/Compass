@@ -15,6 +15,7 @@ mod download;
 mod ebook_tts;
 mod fonts;
 mod gamepad;
+mod harbor_import;
 mod http_fetch;
 mod http_redirect;
 mod playback_redirect;
@@ -723,6 +724,7 @@ pub fn run() {
     if games::try_run_achievement_worker() { return; }
     if games::try_run_archive_worker() { return; }
     if games::try_run_hydra_import_worker() { return; }
+    harbor_import::prepare();
     {
         let args: Vec<String> = std::env::args().skip(1).collect();
         if let Some(p) = media_file_from_args(&args) {
