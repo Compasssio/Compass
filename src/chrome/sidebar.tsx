@@ -74,7 +74,7 @@ export function Sidebar() {
           data-tauri-drag-region
           data-compass-sidebar-brand
           className={`flex shrink-0 items-center justify-center gap-0.5 px-3 text-ink ${
-            collapsed ? "" : "lg:justify-start lg:px-7"
+            collapsed ? "" : "lg:justify-start lg:px-7 rtl:lg:ps-3"
           } ${hybridBar ? "h-12" : "h-20"}`}
         >
           {!hybridBar && (
