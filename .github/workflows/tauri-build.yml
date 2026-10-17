@@ -84,6 +84,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          # A failure after the Rust build (bundling, signing) should not throw the 15 minute compile away.
+          cache-on-failure: true
           workspaces: |
             compass-core
             src-tauri
@@ -244,7 +246,8 @@ jobs:
 
       - name: Build Linux system packages
         if: contains(matrix.platform.runner, 'ubuntu')
-        run: pnpm tauri:build:linux-system --target ${{ matrix.platform.target }} --bundles deb,appimage
+        # --verbose: without it a linuxdeploy failure only says "failed to run linuxdeploy".
+        run: pnpm tauri:build:linux-system --target ${{ matrix.platform.target }} --bundles deb,appimage --verbose
 
       - name: Build verified Windows managed installer
         if: matrix.platform.target == 'x86_64-pc-windows-msvc'
