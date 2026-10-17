@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Poster } from "@/components/poster";
 import { useT } from "@/lib/i18n";
+import { badgeLabel } from "@/lib/social/badge-label";
 import type { FeaturedItem, FeaturedList } from "@/lib/social/featured-lists";
 import { ListHeart } from "./list-heart";
 import { ListShareButton } from "./list-share-button";
@@ -208,7 +209,7 @@ function BadgesSection({ badges }: { badges: Badge[] }) {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">
-              <span className="truncate text-[14px] font-semibold text-ink">{b.name}</span>
+              <span className="truncate text-[14px] font-semibold text-ink">{badgeLabel(b.name)}</span>
             </div>
             <p className="mt-1 text-[12.5px] leading-snug text-ink-muted">{b.description}</p>
             {b.rarityPct !== undefined && (

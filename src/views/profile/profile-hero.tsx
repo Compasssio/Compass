@@ -16,6 +16,7 @@ import { countryFlagSrc } from "@/components/flag";
 import { acceptFriend, removeFriend, sendFriendRequest } from "@/lib/social/friends";
 import { PRESENCE_META, useMyPresence } from "@/lib/social/presence";
 import { useT } from "@/lib/i18n";
+import { badgeLabel } from "@/lib/social/badge-label";
 import { useView } from "@/lib/view";
 import {
   sanitizeStatLayout,
@@ -273,12 +274,12 @@ function HeroBadge({ badge }: { badge: HeroBadge }) {
         src={badge.iconUrl}
         width={22}
         height={22}
-        alt={badge.name}
+        alt={badgeLabel(badge.name)}
         draggable={false}
         className="inline-block"
       />
       <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-elevated px-2 py-1 text-[11px] font-medium text-ink opacity-0 shadow-lg ring-1 ring-edge-soft transition-opacity duration-150 group-hover/badge:opacity-100">
-        {badge.name}
+        {badgeLabel(badge.name)}
       </span>
     </span>
   );

@@ -13,6 +13,7 @@ import { requestOpenProfile } from "@/lib/social/open-profile";
 import { regionFlagSrc } from "@/lib/region-flags";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { useT } from "@/lib/i18n";
+import { badgeLabel } from "@/lib/social/badge-label";
 import {
   PRESENCE_META,
   presenceStatusLabel,
@@ -345,7 +346,7 @@ export function ProfileHoverCard({
 function BadgeDot({ badge }: { badge: Badge }) {
   return (
     <HoverTooltip
-      label={badge.name}
+      label={badgeLabel(badge.name)}
       sublabel={badge.description || null}
       side="top"
       align="center"

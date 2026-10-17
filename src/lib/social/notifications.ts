@@ -4,6 +4,7 @@ import {
   type ThemeNotification,
 } from "@/lib/theme-store";
 import { t } from "@/lib/i18n";
+import { badgeLabel } from "@/lib/social/badge-label";
 import { badgeIconUrl } from "@/views/profile/badge-catalog";
 import { socialGet, socialPost } from "./client";
 
@@ -73,7 +74,7 @@ function socialToCenter(n: SocialNotif): CenterNotif {
       source: "social",
       kind: "badge-received",
       title:
-        n.title || (name ? t("You earned the {name} badge", { name }) : t("New badge unlocked")),
+        n.title || (name ? t("You earned the {name} badge", { name: badgeLabel(name) }) : t("New badge unlocked")),
       body: n.body || (name ? t("Congrats! Tap to view your badges.") : undefined),
       cover: badgeIconUrl(icon),
       createdAt: ms(n.createdAt),
