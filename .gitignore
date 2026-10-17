@@ -95,6 +95,8 @@ audit-routing.txt
 docs/TV-OPEN-BACKLOG.md
 audit-rest.txt
 *.md
+# Imported as ?raw by the ebook translator, so a checkout without it cannot build.
+!src/lib/ebook/translation-instructions.md
 
 installer/src-tauri/payload/
 installer/payload-stage/

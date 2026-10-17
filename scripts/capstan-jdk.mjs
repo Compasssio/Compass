@@ -183,10 +183,14 @@ export async function resolveJdks(target, log) {
   if (!TARGETS[target]) throw new Error(`unknown target ${target}, known: ${Object.keys(TARGETS).join(", ")}`);
   const named = jdkHome(process.env.COMPASS_CAPSTAN_JDK ?? process.env.JAVA_HOME ?? "");
   const host = hostTriple();
-  const hostJdk =
-    hasJmods(named) && existsSync(join(named, "bin", exe("jlink")))
-      ? named
-      : await fetchJdk(host, DEFAULT_FEATURE, log);
+  const hasTools = hasJmods(named) && existsSync(join(named, "bin", exe("jlink")));
+  // The layer is compiled for JDK 17, so a runtime jlinked from an older JAVA_HOME (the ubuntu-22.04
+  // runner ships 11) stages cleanly and then cannot load the layer's classes.
+  const feature = hasTools ? featureOf(named) : 0;
+  if (hasTools && feature < DEFAULT_FEATURE) {
+    log(`${named} is JDK ${feature}, the layer needs ${DEFAULT_FEATURE} or newer, fetching one instead`);
+  }
+  const hostJdk = feature >= DEFAULT_FEATURE ? named : await fetchJdk(host, DEFAULT_FEATURE, log);
   if (target === host) return { hostJdk, targetJdk: hostJdk };
 
   const forTarget = jdkHome(process.env.COMPASS_CAPSTAN_JDK_TARGET ?? "");
