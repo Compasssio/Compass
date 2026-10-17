@@ -99,6 +99,8 @@ audit-rest.txt
 installer/src-tauri/payload/
 installer/payload-stage/
 !installer/**/*.md
+# build.mjs copies this into the engine's corresponding source bundle
+!tools/pokemon-engine/README.md
 # local design references and perf captures, not for distribution
 tools/tv-refs/
 docs/tv-perf/
