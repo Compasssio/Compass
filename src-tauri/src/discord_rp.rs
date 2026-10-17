@@ -9,7 +9,7 @@ use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
-const APP_ID: &str = "1510339683215736892";
+const APP_ID: &str = "1560272293773447320";
 const SMALL_IMAGE_KEY: &str = "compass_logo";
 /// Discord rate-limits activity updates; a short gap merges a burst of changes without
 /// making a normal change feel delayed.
