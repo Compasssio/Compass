@@ -1,0 +1,75 @@
+import { lucideIconInnerSvg } from "@/lib/lucide-svg";
+import type { LucideIcon } from "lucide-react";
+import {
+  Home, House, Compass, Map, MapPin, Globe, Search, Filter, LayoutGrid, LayoutDashboard, List, ListVideo, Menu,
+  Film, Clapperboard, Popcorn, Tv, MonitorPlay, Monitor, Video, Camera, Image, Images, Aperture, Ticket, Drama, Projector,
+  Play, Pause, Radio, Podcast, Mic, Headphones, Music, Music2, Music4, Disc, Disc3, AudioLines, Volume2, Speaker, Guitar,
+  Heart, Star, Sparkle, Sparkles, Flame, Zap, Gem, Diamond, Crown, Trophy, Award, Medal, Gift, PartyPopper, Wand2, Rocket,
+  Bot, Ghost, Skull, Sword, Swords, Shield, ShieldCheck, Target, Bomb, Dice5, Puzzle, Gamepad2, Joystick, Bug,
+  Cat, Dog, Bird, Fish, Rabbit, Turtle, Snail, Bone, PawPrint, Baby, User, Users, Smile, Laugh, ThumbsUp, Hand,
+  Sun, Moon, MoonStar, Cloud, CloudRain, CloudSnow, Snowflake, Sunrise, Sunset, Wind, Rainbow, Leaf, Trees, TreePine,
+  Flower, Flower2, Sprout, Mountain, Waves, Droplet, Umbrella,
+  Coffee, Pizza, IceCream, Cake, Utensils, Wine, Beer, Martini, Apple, Cherry, Carrot, Croissant, Sandwich, Cookie,
+  Donut, Egg, Drumstick, Salad, Candy,
+  Book, BookOpen, Library, Bookmark, Newspaper, FileText, Folder, FolderOpen, Archive, Inbox, Layers, Tag, Tags, Hash,
+  Clock, Calendar, CalendarDays, History, Timer, Hourglass, AlarmClock,
+  Settings, Sliders, Bell, BellRing, Lightbulb, Key, Lock, Eye, Flag, Megaphone, Anchor, Feather, Infinity, AtSign, Command,
+  Wifi, Battery, Cpu, HardDrive, Database, Server, Download, Upload, Share2, Link, Paperclip,
+  Car, Plane, Train, Ship, Sailboat, Bike, Bus, Truck, Tent, Backpack, Luggage, Footprints,
+  Dumbbell, Palette, Brush, PenTool, Pencil, Scissors, Ruler, Shapes, Sticker, Stamp,
+  ShoppingCart, ShoppingBag, Store, CreditCard, Wallet, Coins, DollarSign, Banknote,
+  MessageCircle, MessageSquare, Mail, Send, Phone, Rss,
+} from "lucide-react";
+
+const RAW: LucideIcon[] = [
+  Home, House, Compass, Map, MapPin, Globe, Search, Filter, LayoutGrid, LayoutDashboard, List, ListVideo, Menu,
+  Film, Clapperboard, Popcorn, Tv, MonitorPlay, Monitor, Video, Camera, Image, Images, Aperture, Ticket, Drama, Projector,
+  Play, Pause, Radio, Podcast, Mic, Headphones, Music, Music2, Music4, Disc, Disc3, AudioLines, Volume2, Speaker, Guitar,
+  Heart, Star, Sparkle, Sparkles, Flame, Zap, Gem, Diamond, Crown, Trophy, Award, Medal, Gift, PartyPopper, Wand2, Rocket,
+  Bot, Ghost, Skull, Sword, Swords, Shield, ShieldCheck, Target, Bomb, Dice5, Puzzle, Gamepad2, Joystick, Bug,
+  Cat, Dog, Bird, Fish, Rabbit, Turtle, Snail, Bone, PawPrint, Baby, User, Users, Smile, Laugh, ThumbsUp, Hand,
+  Sun, Moon, MoonStar, Cloud, CloudRain, CloudSnow, Snowflake, Sunrise, Sunset, Wind, Rainbow, Leaf, Trees, TreePine,
+  Flower, Flower2, Sprout, Mountain, Waves, Droplet, Umbrella,
+  Coffee, Pizza, IceCream, Cake, Utensils, Wine, Beer, Martini, Apple, Cherry, Carrot, Croissant, Sandwich, Cookie,
+  Donut, Egg, Drumstick, Salad, Candy,
+  Book, BookOpen, Library, Bookmark, Newspaper, FileText, Folder, FolderOpen, Archive, Inbox, Layers, Tag, Tags, Hash,
+  Clock, Calendar, CalendarDays, History, Timer, Hourglass, AlarmClock,
+  Settings, Sliders, Bell, BellRing, Lightbulb, Key, Lock, Eye, Flag, Megaphone, Anchor, Feather, Infinity, AtSign, Command,
+  Wifi, Battery, Cpu, HardDrive, Database, Server, Download, Upload, Share2, Link, Paperclip,
+  Car, Plane, Train, Ship, Sailboat, Bike, Bus, Truck, Tent, Backpack, Luggage, Footprints,
+  Dumbbell, Palette, Brush, PenTool, Pencil, Scissors, Ruler, Shapes, Sticker, Stamp,
+  ShoppingCart, ShoppingBag, Store, CreditCard, Wallet, Coins, DollarSign, Banknote,
+  MessageCircle, MessageSquare, Mail, Send, Phone, Rss,
+];
+
+function kebab(s: string): string {
+  return s
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
+    .toLowerCase();
+}
+
+export type ChromeIcon = { id: string; label: string; Icon: LucideIcon };
+
+export const CHROME_ICONS: ChromeIcon[] = RAW.map((Icon, i) => {
+  const id = Icon.displayName ? kebab(Icon.displayName) : `icon-${i}`;
+  return { id, label: id.replace(/-/g, " "), Icon };
+});
+
+const BY_ID: Record<string, LucideIcon> = {};
+for (const c of CHROME_ICONS) BY_ID[c.id] = c.Icon;
+
+export function iconComponent(id: string): LucideIcon | undefined {
+  return BY_ID[id];
+}
+
+const svgCache: Record<string, string> = {};
+
+export function iconInnerSvg(id: string): string | undefined {
+  if (svgCache[id] !== undefined) return svgCache[id];
+  const Icon = BY_ID[id];
+  if (!Icon) return undefined;
+  const inner = lucideIconInnerSvg(Icon);
+  svgCache[id] = inner;
+  return inner;
+}

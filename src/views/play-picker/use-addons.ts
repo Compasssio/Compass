@@ -1,0 +1,139 @@
+import { useEffect, useState } from "react";
+import { fetchInstalledAddons, fetchManifestAt, filterEnabled } from "@/lib/addon-store";
+import { userAddons, withDebridKeys, type Addon } from "@/lib/addons";
+import { applyOrderToItems, loadDisplayOrder } from "@/lib/addons-store/reorder";
+import type { useSettings } from "@/lib/settings";
+import {
+  loadStreamPlugins,
+  pluginAddons,
+  pluginListKey,
+  setStreamPluginConfig,
+  subscribeStreamPluginList,
+} from "@/lib/streams/plugins";
+
+type Settings = ReturnType<typeof useSettings>["settings"];
+
+function hasAnyResources(a: Addon): boolean {
+  return (a.manifest.resources ?? []).length > 0;
+}
+
+function declaresStream(a: Addon): boolean {
+  return (a.manifest.resources ?? []).some((r) =>
+    typeof r === "string" ? r === "stream" : r.name === "stream",
+  );
+}
+
+async function resolveManifests(addons: Addon[]): Promise<Addon[]> {
+  return Promise.all(
+    addons.map(async (a) => {
+      if (hasAnyResources(a)) return a;
+      const manifest = await fetchManifestAt(a.transportUrl).catch(() => null);
+      return manifest ? { ...a, manifest } : a;
+    }),
+  );
+}
+
+export function useAddons(
+  authKey: string | null,
+  settings: Settings,
+): {
+  addons: Addon[] | null;
+  userHasStreamAddons: boolean;
+} {
+  const [addons, setAddons] = useState<Addon[] | null>(null);
+  const [userHasStreamAddons, setUserHasStreamAddons] = useState(false);
+  const [pluginTick, setPluginTick] = useState(0);
+  useEffect(() => {
+    let last = pluginListKey();
+    return subscribeStreamPluginList(() => {
+      const next = pluginListKey();
+      if (next === last) return;
+      last = next;
+      setPluginTick((n) => n + 1);
+    });
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    const debridKeys = {
+      rdKey: settings.rdKey,
+      tbKey: settings.tbKey,
+      adKey: settings.adKey,
+      pmKey: settings.pmKey,
+      dlKey: settings.dlKey,
+    };
+    (async () => {
+      const stremioAddons = filterEnabled(authKey ? await userAddons(authKey).catch(() => []) : []);
+      const installed = filterEnabled(await fetchInstalledAddons().catch(() => []));
+      if (cancelled) return;
+      const merged: Addon[] = [];
+      const idxByUrl = new Map<string, number>();
+      for (const a of [...stremioAddons, ...installed]) {
+        const existingIdx = idxByUrl.get(a.transportUrl);
+        if (existingIdx === undefined) {
+          idxByUrl.set(a.transportUrl, merged.length);
+          merged.push(a);
+          continue;
+        }
+        if (!hasAnyResources(merged[existingIdx]) && hasAnyResources(a)) {
+          merged[existingIdx] = a;
+        }
+      }
+      const resolved = await resolveManifests(merged);
+      if (cancelled) return;
+      merged.length = 0;
+      merged.push(...resolved);
+      const savedOrder = loadDisplayOrder();
+      if (savedOrder.length > 0) {
+        const ordered = applyOrderToItems(merged, savedOrder);
+        merged.length = 0;
+        merged.push(...ordered);
+      }
+      const userStreamCount = merged.filter(declaresStream).length;
+      setUserHasStreamAddons(userStreamCount > 0);
+      const list = withDebridKeys(merged, debridKeys);
+      console.info(
+        `[picker] authKey=${authKey ? "yes" : "no"} tbKey=${settings.tbKey ? `set(${settings.tbKey.slice(0, 8)}…)` : "EMPTY"} stremioAddons=${stremioAddons.length} installed=${installed.length} merged=${merged.length} userStreamCount=${userStreamCount}`,
+      );
+      // The store is read even while the switch keeps the extensions back: an item that names the
+      // plugin that listed it is still that plugin's to answer, and answering needs the installed
+      // set. Reading it starts no runtime; only querying one does.
+      await loadStreamPlugins();
+      if (cancelled) return;
+      setStreamPluginConfig({ tmdbKey: settings.tmdbKey });
+      if (settings.pluginsEnabled) {
+        // The switch holds back the extensions that have a page of their own. A plugin with no rows
+        // of its own is asked either way: holding it back would leave it unreachable.
+        list.push(
+          ...pluginAddons({
+            groupByRepo: settings.pluginsGroupByRepo,
+            includeExtensions: settings.pluginsOutsideTab,
+          }),
+        );
+        void import("@/lib/plugins/auto-check").then((m) =>
+          m.schedulePluginAutoCheck(settings.pluginsAutoCheck),
+        );
+      }
+      console.info(
+        `[picker] final addon list (${list.length}): ${list.map((a) => a.manifest.name).join(", ")}`,
+      );
+      setAddons(list);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    authKey,
+    settings.rdKey,
+    settings.tbKey,
+    settings.adKey,
+    settings.pmKey,
+    settings.dlKey,
+    settings.tmdbKey,
+    settings.pluginsEnabled,
+    settings.pluginsOutsideTab,
+    settings.pluginsGroupByRepo,
+    pluginTick,
+  ]);
+
+  return { addons, userHasStreamAddons };
+}

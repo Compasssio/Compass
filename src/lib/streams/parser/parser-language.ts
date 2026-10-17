@@ -1,0 +1,180 @@
+const LANG_TOKENS: Record<string, string> = {
+  ENG: "English",
+  ENGLISH: "English",
+  ITA: "Italian",
+  ITALIAN: "Italian",
+  RUS: "Russian",
+  RUSSIAN: "Russian",
+  HIN: "Hindi",
+  HINDI: "Hindi",
+  ESP: "Spanish",
+  SPA: "Spanish",
+  SPANISH: "Spanish",
+  LAT: "Spanish (Latin America)",
+  LATINO: "Spanish (Latin America)",
+  LATAM: "Spanish (Latin America)",
+  CASTELLANO: "Spanish",
+  KOR: "Korean",
+  KOREAN: "Korean",
+  JPN: "Japanese",
+  JAPANESE: "Japanese",
+  JAP: "Japanese",
+  CHN: "Chinese",
+  CHI: "Chinese",
+  CHINESE: "Chinese",
+  ZHO: "Chinese",
+  MAN: "Chinese",
+  MANDARIN: "Chinese",
+  CANTONESE: "Chinese",
+  POR: "Portuguese",
+  PORTUGUESE: "Portuguese",
+  PTBR: "Portuguese",
+  DUBLADO: "Portuguese",
+  GER: "German",
+  GERMAN: "German",
+  DEU: "German",
+  FRA: "French",
+  FRENCH: "French",
+  FRE: "French",
+  VFF: "French",
+  VFQ: "French",
+  VOSTFR: "French",
+  TUR: "Turkish",
+  TURKISH: "Turkish",
+  ARA: "Arabic",
+  ARABIC: "Arabic",
+  TAM: "Tamil",
+  TAMIL: "Tamil",
+  TEL: "Telugu",
+  TELUGU: "Telugu",
+  CES: "Czech",
+  CZECH: "Czech",
+  CZE: "Czech",
+  DAN: "Danish",
+  DANISH: "Danish",
+  FIN: "Finnish",
+  FINNISH: "Finnish",
+  HEB: "Hebrew",
+  HEBREW: "Hebrew",
+  HUN: "Hungarian",
+  HUNGARIAN: "Hungarian",
+  NLD: "Dutch",
+  DUTCH: "Dutch",
+  DUT: "Dutch",
+  NOR: "Norwegian",
+  NORWEGIAN: "Norwegian",
+  POL: "Polish",
+  POLISH: "Polish",
+  RON: "Romanian",
+  ROMANIAN: "Romanian",
+  ROM: "Romanian",
+  SWE: "Swedish",
+  SWEDISH: "Swedish",
+  THA: "Thai",
+  THAI: "Thai",
+  UKR: "Ukrainian",
+  UKRAINIAN: "Ukrainian",
+  VIE: "Vietnamese",
+  VIETNAMESE: "Vietnamese",
+};
+
+const LANG_RX =
+  /\b(ENG(?:LISH)?|ITA(?:LIAN)?|RUS(?:SIAN)?|HIN(?:DI)?|ESP|SPA(?:NISH)?|LAT(?:INO|AM)?|CASTELLANO|KOR(?:EAN)?|JPN|JAPANESE|JAP|CHN|CHI(?:NESE)?|ZHO|MAN(?:DARIN)?|CANTONESE|POR(?:TUGUESE)?|PTBR|DUBLADO|GER(?:MAN)?|DEU|FRA|FRENCH|FRE|VFF|VFQ|VOSTFR|TUR(?:KISH)?|ARA(?:BIC)?|TAM(?:IL)?|TEL(?:UGU)?|CES|CZECH|CZE|DAN(?:ISH)?|FIN(?:NISH)?|HEB(?:REW)?|HUN(?:GARIAN)?|NLD|DUTCH|DUT|NOR(?:WEGIAN)?|POL(?:ISH)?|RON|ROM|ROMANIAN|SWE(?:DISH)?|THA|THAI|UKR(?:AINIAN)?|VIE(?:TNAMESE)?|MULTI|DUAL)\b/gi;
+
+const FLAG_TO_LANGUAGE: Record<string, string> = {
+  US: "English", GB: "English", CA: "English", AU: "English", NZ: "English", IE: "English",
+  ES: "Spanish", MX: "Spanish", AR: "Spanish", CO: "Spanish", PE: "Spanish", CL: "Spanish",
+  IT: "Italian",
+  DE: "German", AT: "German", CH: "German",
+  FR: "French", BE: "French", LU: "French",
+  JP: "Japanese",
+  KR: "Korean", KP: "Korean",
+  CN: "Chinese", HK: "Chinese", TW: "Chinese", SG: "Chinese",
+  PT: "Portuguese", BR: "Portuguese",
+  RU: "Russian", BY: "Russian",
+  IN: "Hindi", PK: "Hindi",
+  SA: "Arabic", AE: "Arabic", EG: "Arabic", IQ: "Arabic", JO: "Arabic", KW: "Arabic", LB: "Arabic", MA: "Arabic", QA: "Arabic", SY: "Arabic", TN: "Arabic",
+  IL: "Hebrew",
+  TR: "Turkish",
+  NL: "Dutch",
+  NO: "Norwegian",
+  PL: "Polish",
+  RO: "Romanian", MD: "Romanian",
+  SE: "Swedish",
+  DK: "Danish",
+  FI: "Finnish",
+  CZ: "Czech",
+  HU: "Hungarian",
+  TH: "Thai",
+  UA: "Ukrainian",
+  VN: "Vietnamese",
+  GR: "Greek",
+  ID: "Indonesian",
+  MY: "Malay",
+  PH: "Tagalog",
+  IR: "Persian",
+};
+
+const FLAG_RX = /[\u{1F1E6}-\u{1F1FF}][\u{1F1E6}-\u{1F1FF}]/gu;
+const ISO_PAIR_RX = /(?:^|[\.\-_\s\[(])(EN|FR|ES|IT|DE|PT|RU|JA|JP|KO|KR|ZH|CN|HI|AR|TR|NL|PL|RO|SV|SE|DA|FI|CS|CZ|HU|TH|UK|UA|VI|GB|US|MX|BR|CA|AU|NZ|TW|HK|IL|HE|SA|AE|EG|GR|ID|MY|PH|IR|FA)(?:[\.\-_\s\])]|$)/g;
+const ISO_PAIR_TO_LANGUAGE: Record<string, string> = {
+  EN: "English", GB: "English", US: "English", CA: "English", AU: "English", NZ: "English",
+  ES: "Spanish", MX: "Spanish",
+  IT: "Italian",
+  DE: "German",
+  FR: "French",
+  PT: "Portuguese", BR: "Portuguese",
+  RU: "Russian",
+  JA: "Japanese", JP: "Japanese",
+  KO: "Korean", KR: "Korean",
+  ZH: "Chinese", CN: "Chinese", TW: "Chinese", HK: "Chinese",
+  HI: "Hindi",
+  AR: "Arabic", SA: "Arabic", AE: "Arabic", EG: "Arabic",
+  TR: "Turkish",
+  NL: "Dutch",
+  PL: "Polish",
+  RO: "Romanian",
+  SV: "Swedish", SE: "Swedish",
+  DA: "Danish",
+  FI: "Finnish",
+  CS: "Czech", CZ: "Czech",
+  HU: "Hungarian",
+  TH: "Thai",
+  UK: "Ukrainian", UA: "Ukrainian",
+  VI: "Vietnamese",
+  IL: "Hebrew", HE: "Hebrew",
+  GR: "Greek",
+  ID: "Indonesian",
+  MY: "Malay",
+  PH: "Tagalog",
+  IR: "Persian", FA: "Persian",
+};
+
+export function parseLanguages(text: string): string[] {
+  const out = new Set<string>();
+  const tokens = text.match(LANG_RX) ?? [];
+  for (const raw of tokens) {
+    const upper = raw.toUpperCase();
+    const mapped = LANG_TOKENS[upper];
+    if (mapped) out.add(mapped);
+    else if (upper === "MULTI" || upper === "DUAL") out.add("Multi");
+  }
+  for (const flag of text.match(FLAG_RX) ?? []) {
+    const a = flag.codePointAt(0);
+    const b = flag.codePointAt(2);
+    if (a == null || b == null) continue;
+    const code = String.fromCharCode(a - 0x1f1e6 + 65) + String.fromCharCode(b - 0x1f1e6 + 65);
+    const lang = FLAG_TO_LANGUAGE[code];
+    if (lang) out.add(lang);
+  }
+  let pairMatch: RegExpExecArray | null;
+  ISO_PAIR_RX.lastIndex = 0;
+  while ((pairMatch = ISO_PAIR_RX.exec(text)) != null) {
+    const lang = ISO_PAIR_TO_LANGUAGE[pairMatch[1].toUpperCase()];
+    if (lang) out.add(lang);
+  }
+  const concrete = [...out].filter((l) => l !== "Multi");
+  if (concrete.length > 1) return ["Multi", ...concrete];
+  if (concrete.length === 1) return concrete;
+  return out.has("Multi") ? ["Multi"] : [];
+}

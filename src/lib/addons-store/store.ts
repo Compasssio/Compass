@@ -1,0 +1,436 @@
+import { useEffect, useState } from "react";
+import type { Addon } from "@/lib/addons";
+import { useAuth } from "@/lib/auth";
+import { userAddons } from "@/lib/addons";
+import { fetchInstalledAddons } from "@/lib/addon-store";
+import { listAddons } from "@/lib/providers/stremio-addons";
+import { isAdultText } from "./adult-filter";
+import { fetchCommunityAddons, fetchManifest } from "./community";
+import { CURATED_ADDONS, type CuratedEntry } from "./curated";
+
+const ALWAYS_HIDDEN_IDS = new Set<string>(["org.stremio.opensubtitles", "com.opensubtitles.v3"]);
+
+const CURATED_BY_ID = new Map<string, CuratedEntry>(CURATED_ADDONS.map((e) => [e.id, e]));
+
+function normalizeAddonName(name: string | undefined): string {
+  if (!name) return "";
+  return name
+    .toLowerCase()
+    .replace(/\[[^\]]*\]/g, "")
+    .replace(/\|.*$/g, "")
+    .replace(
+      /\b(rd|tb|ad|premiumize|debrid|elfhosted|community|official|free|paid|sponsored|by\s+\S+)\b/g,
+      "",
+    )
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+export type ResolvedAddon = {
+  curated?: CuratedEntry;
+  manifest: Addon["manifest"] | null;
+  transportUrl: string;
+  source: "curated" | "community" | "stremio-user" | "compass-local";
+  installed: boolean;
+};
+
+export function useAddonsCatalog(adultsAllowed: boolean): {
+  loading: boolean;
+  byId: Map<string, ResolvedAddon>;
+  installedIds: Set<string>;
+  installedAddons: ResolvedAddon[];
+  refetch: () => void;
+} {
+  const { authKey } = useAuth();
+  const [byId, setById] = useState<Map<string, ResolvedAddon>>(new Map());
+  const [loading, setLoading] = useState(true);
+  const [installedIds, setInstalledIds] = useState<Set<string>>(new Set());
+  const [installedAddons, setInstalledAddons] = useState<ResolvedAddon[]>([]);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const local = await fetchInstalledAddons().catch(() => [] as Addon[]);
+      const stremio = authKey ? await userAddons(authKey).catch(() => [] as Addon[]) : [];
+      const installed = new Set<string>([
+        ...local.map((a) => a.manifest.id),
+        ...stremio.map((a) => a.manifest.id),
+      ]);
+      // One row per installation. The catalog map below is keyed by manifest id, so an
+      // addon installed twice (Torrentio with two debrid configs, say) would collapse into
+      // a single entry and only one of the two could be removed. The account list wins;
+      // local installs it does not know about are appended.
+      const rows: ResolvedAddon[] = [];
+      const seenUrls = new Set<string>();
+      const addRow = (a: Addon, source: ResolvedAddon["source"]) => {
+        const id = a.manifest?.id;
+        // Only the host is case-insensitive; configured paths and tokens are not.
+        let url = a.transportUrl.trim();
+        try { url = new URL(url).href; } catch { /* Keep nonstandard transports distinct. */ }
+        if (!id || seenUrls.has(url)) return;
+        seenUrls.add(url);
+        const curated = CURATED_BY_ID.get(id);
+        rows.push({
+          curated,
+          manifest: a.manifest,
+          transportUrl: a.transportUrl,
+          source: curated ? "curated" : source,
+          installed: true,
+        });
+      };
+      for (const a of stremio) addRow(a, "stremio-user");
+      for (const a of local) addRow(a, "compass-local");
+      const installedRows = rows
+        .filter((r) => !ALWAYS_HIDDEN_IDS.has(r.manifest?.id ?? ""))
+        .filter((r) => adultsAllowed || !isAdultAddon(r));
+      if (cancelled) return;
+
+      const map = new Map<string, ResolvedAddon>();
+
+      for (const e of CURATED_ADDONS) {
+        map.set(e.id, {
+          curated: e,
+          manifest: null,
+          transportUrl: e.transportUrl,
+          source: "curated",
+          installed: installed.has(e.id),
+        });
+      }
+
+      for (const a of stremio) {
+        const existing = map.get(a.manifest.id);
+        map.set(a.manifest.id, {
+          curated: existing?.curated,
+          manifest: a.manifest,
+          transportUrl: a.transportUrl,
+          source: existing ? existing.source : "stremio-user",
+          installed: true,
+        });
+      }
+      for (const a of local) {
+        const existing = map.get(a.manifest.id);
+        map.set(a.manifest.id, {
+          curated: existing?.curated,
+          manifest: a.manifest,
+          transportUrl: a.transportUrl,
+          source: existing ? existing.source : "compass-local",
+          installed: true,
+        });
+      }
+
+      const [community, saList] = await Promise.all([
+        fetchCommunityAddons(),
+        listAddons({ limit: 200, sort_by: "stars", order: "desc" })
+          .then((r) =>
+            r.addons.map((a): Addon => ({ manifest: a.manifest, transportUrl: a.manifestUrl })),
+          )
+          .catch(() => [] as Addon[]),
+      ]);
+      if (cancelled) return;
+      const saIds = new Set<string>();
+      const saManifestById = new Map<string, Addon["manifest"]>();
+      for (const a of saList) {
+        const id = a.manifest?.id;
+        if (id) {
+          saIds.add(id);
+          saManifestById.set(id, a.manifest);
+        }
+      }
+      const mergedCommunity: Addon[] = [];
+      const seenCommunityIds = new Set<string>();
+      for (const a of [...saList, ...community]) {
+        const id = a.manifest?.id;
+        if (!id || seenCommunityIds.has(id)) continue;
+        seenCommunityIds.add(id);
+        mergedCommunity.push(a);
+      }
+      const byTransportUrl = new Map<string, string>();
+      for (const [id, r] of map) byTransportUrl.set(r.transportUrl.toLowerCase(), id);
+
+      for (const a of mergedCommunity) {
+        const realId = a.manifest.id;
+        const url = a.transportUrl;
+        const existingIdByUrl = byTransportUrl.get(url.toLowerCase());
+        if (existingIdByUrl && existingIdByUrl !== realId) {
+          const existing = map.get(existingIdByUrl)!;
+          existing.manifest = a.manifest;
+          map.delete(existingIdByUrl);
+          map.set(realId, {
+            ...existing,
+            manifest: a.manifest,
+            transportUrl: url,
+            installed: existing.installed || installed.has(realId),
+          });
+          byTransportUrl.set(url.toLowerCase(), realId);
+          continue;
+        }
+        if (!map.has(realId)) {
+          map.set(realId, {
+            manifest: a.manifest,
+            transportUrl: url,
+            source: "community",
+            installed: installed.has(realId),
+          });
+          byTransportUrl.set(url.toLowerCase(), realId);
+        } else {
+          const existing = map.get(realId)!;
+          if (!existing.manifest) existing.manifest = a.manifest;
+        }
+      }
+
+      const curatedNeedingFetch = [...map.values()].filter(
+        (r) => !r.manifest && r.source === "curated",
+      );
+      await Promise.all(
+        curatedNeedingFetch.map(async (r) => {
+          const m = await fetchManifest(r.transportUrl);
+          if (m) r.manifest = m;
+        }),
+      );
+
+      if (cancelled) return;
+
+      const reKeyed = new Map<string, ResolvedAddon>();
+      for (const [oldKey, r] of map) {
+        const realId = r.manifest?.id;
+        if (!realId || realId === oldKey) {
+          reKeyed.set(oldKey, r);
+          continue;
+        }
+        const existing = reKeyed.get(realId);
+        if (existing) {
+          existing.curated = existing.curated ?? r.curated;
+          existing.installed = existing.installed || r.installed || installed.has(realId);
+          if (!existing.manifest) existing.manifest = r.manifest;
+        } else {
+          reKeyed.set(realId, { ...r, installed: r.installed || installed.has(realId) });
+        }
+      }
+      map.clear();
+      for (const [k, v] of reKeyed) map.set(k, v);
+
+      for (const [id, r] of map) {
+        const sa = saManifestById.get(id);
+        if (!sa || !r.manifest) continue;
+        r.manifest = {
+          ...r.manifest,
+          name: sa.name ?? r.manifest.name,
+          logo: r.manifest.logo ?? sa.logo,
+          description: sa.description ?? r.manifest.description,
+          background: r.manifest.background ?? sa.background,
+        };
+      }
+
+      const byNormalizedName = new Map<string, string[]>();
+      for (const [id, r] of map) {
+        const norm = normalizeAddonName(r.manifest?.name);
+        if (!norm) continue;
+        const bucket = byNormalizedName.get(norm) ?? [];
+        bucket.push(id);
+        byNormalizedName.set(norm, bucket);
+      }
+      for (const [, ids] of byNormalizedName) {
+        if (ids.length <= 1) continue;
+        const installedInBucket = ids.filter((id) => map.get(id)?.installed);
+        if (installedInBucket.length > 0) {
+          for (const id of ids) if (!map.get(id)?.installed) map.delete(id);
+          continue;
+        }
+        const curatedIds = ids.filter((id) => map.get(id)?.curated);
+        const saIdsHit = ids.filter((id) => saIds.has(id));
+        const winner = curatedIds[0] ?? saIdsHit[0] ?? ids[0];
+        for (const id of ids) if (id !== winner) map.delete(id);
+      }
+
+      for (const id of ALWAYS_HIDDEN_IDS) map.delete(id);
+
+      if (!adultsAllowed) {
+        for (const [id, r] of map) {
+          if (isAdultAddon(r)) map.delete(id);
+        }
+      }
+
+      setById(new Map(map));
+      setInstalledIds(installed);
+      setInstalledAddons(installedRows);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authKey, adultsAllowed, tick]);
+
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent<{ id?: string; installed?: boolean }>).detail;
+      const id = detail?.id;
+      const next = detail?.installed;
+      if (!id || typeof next !== "boolean") return;
+      setById((prev) => {
+        const r = prev.get(id);
+        if (!r || r.installed === next) return prev;
+        const out = new Map(prev);
+        out.set(id, { ...r, installed: next });
+        return out;
+      });
+      setInstalledIds((prev) => {
+        const has = prev.has(id);
+        if (has === next) return prev;
+        const out = new Set(prev);
+        if (next) out.add(id);
+        else out.delete(id);
+        return out;
+      });
+      setTick((t) => t + 1);
+    };
+    window.addEventListener("compass:addons-changed", onChange);
+    return () => window.removeEventListener("compass:addons-changed", onChange);
+  }, []);
+
+  useEffect(() => {
+    const onProfileChanged = () => setTick((t) => t + 1);
+    window.addEventListener("compass:active-profile-changed", onProfileChanged);
+    return () => window.removeEventListener("compass:active-profile-changed", onProfileChanged);
+  }, []);
+
+  return { loading, byId, installedIds, installedAddons, refetch: () => setTick((t) => t + 1) };
+}
+
+export function isAdultAddon(r: ResolvedAddon): boolean {
+  if (r.curated) return r.curated.nsfw === true;
+  return r.manifest?.behaviorHints?.adult === true || isAdultText(r.manifest?.id, r.manifest?.name);
+}
+
+function manifestText(r: ResolvedAddon): string {
+  const m = r.manifest;
+  return [m?.name ?? "", m?.description ?? "", m?.id ?? "", r.transportUrl ?? ""]
+    .join(" ")
+    .toLowerCase();
+}
+
+function hasResource(r: ResolvedAddon, name: string): boolean {
+  const rs = r.manifest?.resources ?? [];
+  return rs.some((x) => (typeof x === "string" ? x === name : x.name === name));
+}
+
+const ANIME_RX =
+  /\banime\b|\bkitsu\b|\bmal\b|\bjikan\b|\bmyanimelist\b|\banidb\b|\banilist\b|\bmanga\b/i;
+const SPORTS_RX =
+  /\bsports?\b|\bnfl\b|\bnba\b|\bnhl\b|\bmlb\b|\bsoccer\b|\bfootball\b|\bf1\b|\bformula\s*1\b|\bcricket\b|\bbasketball\b|\bufc\b|\bmma\b|\bwwe\b|\bdazn\b|\besports?\b|\bsporttv\b|\bdaddylive\b/i;
+const LIVE_TV_RX =
+  /\biptv\b|\blive\s*tv\b|\bchannel\b|\bm3u\b|\bplutotv\b|\bpluto\.tv\b|\busatv\b|\bota\b|\bbroadcast\b/i;
+const DEBRID_RX =
+  /\bdebrid\b|\brealdebrid\b|\breal-debrid\b|\btorbox\b|\balldebrid\b|\bpremiumize\b|\bdebridlink\b|\beasydebrid\b|\boffcloud\b|\bmediafusion\b|\bcomet\b|\btorrentio\b|\bjackettio\b|\bknightcrawler\b|\baiostreams\b|\bstreamfusion\b/i;
+const USENET_RX = /\busenet\b|\bnzb\b|\beasynews\b|\bsabnzbd\b|\bnzbget\b/i;
+const SUBS_FOREIGN_RX =
+  /\bsubdl\b|\bsubscene\b|\bopensubtitles\b|\bsubtitle\b|\bsubtitles\b|\bcaption\b|\bwyzie\b/i;
+
+export function categorizeAddon(r: ResolvedAddon): string {
+  if (isAdultAddon(r)) return "adult";
+  if (r.curated) return r.curated.category;
+  const m = r.manifest;
+  if (!m) return "tools";
+  const text = manifestText(r);
+  const types = m.types ?? [];
+  const ids = m.idPrefixes ?? [];
+  const hasStream = hasResource(r, "stream");
+  const hasSub = hasResource(r, "subtitles");
+  const hasCatalog = hasResource(r, "catalog");
+  const hasMeta = hasResource(r, "meta");
+
+  if (
+    ids.some((i) => i.startsWith("kitsu") || i.startsWith("mal") || i.startsWith("anidb")) ||
+    ANIME_RX.test(text)
+  ) {
+    if (hasStream || hasMeta || hasCatalog) return "anime";
+  }
+  if (LIVE_TV_RX.test(text) || types.includes("tv") || types.includes("channel")) return "live-tv";
+  if (SPORTS_RX.test(text)) return "sports";
+  if (hasSub) return "subtitles";
+  if (hasStream) return "streams";
+  if (hasCatalog || hasMeta) return "metadata";
+  return "tools";
+}
+
+export function matchesRail(r: ResolvedAddon, railId: string): boolean {
+  if (isAdultAddon(r)) return false;
+  if (r.curated) return r.curated.rails.includes(railId);
+  const m = r.manifest;
+  if (!m) return false;
+  const text = manifestText(r);
+  const hasStream = hasResource(r, "stream");
+  const hasSub = hasResource(r, "subtitles");
+  const hasCatalog = hasResource(r, "catalog");
+  const hasMeta = hasResource(r, "meta");
+  const ids = m.idPrefixes ?? [];
+
+  switch (railId) {
+    case "essential":
+      return false;
+    case "streams-debrid":
+      return hasStream && DEBRID_RX.test(text);
+    case "streams-free":
+      return (
+        hasStream &&
+        !DEBRID_RX.test(text) &&
+        (USENET_RX.test(text) || /\btorrent\b|\bp2p\b/i.test(text))
+      );
+    case "anime":
+      return (
+        (hasStream || hasMeta || hasCatalog) &&
+        (ids.some((i) => i.startsWith("kitsu") || i.startsWith("mal") || i.startsWith("anidb")) ||
+          ANIME_RX.test(text))
+      );
+    case "subtitles":
+      return hasSub || SUBS_FOREIGN_RX.test(text);
+    case "metadata":
+      return (hasCatalog || hasMeta) && !hasSub && !hasStream;
+    case "sports":
+      return (
+        SPORTS_RX.test(text) ||
+        LIVE_TV_RX.test(text) ||
+        (m.types ?? []).some((t) => t === "tv" || t === "channel")
+      );
+    default:
+      return false;
+  }
+}
+
+function shuffled<T>(arr: T[]): T[] {
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+export function buildRail(
+  byId: Map<string, ResolvedAddon>,
+  railId: string,
+  hardCap = 16,
+): ResolvedAddon[] {
+  const all = [...byId.values()].filter((r) => matchesRail(r, railId));
+  const tier = (r: ResolvedAddon) => {
+    const rec = r.curated?.recommended ?? -1;
+    if (rec >= 90) return 0;
+    if (rec >= 80) return 1;
+    if (rec >= 70) return 2;
+    if (r.curated) return 3;
+    if (r.installed) return 4;
+    return 5;
+  };
+  const groups = new Map<number, ResolvedAddon[]>();
+  for (const r of all) {
+    const t = tier(r);
+    if (!groups.has(t)) groups.set(t, []);
+    groups.get(t)!.push(r);
+  }
+  const out: ResolvedAddon[] = [];
+  for (const t of [...groups.keys()].sort((a, b) => a - b)) {
+    out.push(...shuffled(groups.get(t)!));
+  }
+  return out.slice(0, hardCap);
+}

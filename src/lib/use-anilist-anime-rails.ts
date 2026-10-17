@@ -1,0 +1,90 @@
+import { useCallback, useEffect, useState } from "react";
+import type { Meta } from "@/lib/cinemeta";
+import { useAnilist } from "@/lib/anilist/provider";
+import { fetchMediaListCollection, readCachedCollection } from "@/lib/anilist/lists";
+import { fetchAnilistRecommendations } from "@/lib/anilist/recommendations";
+import { anilistEntryToMeta } from "@/lib/anilist/to-meta";
+import type { AnilistListGroup, MediaListStatus } from "@/lib/anilist/types";
+
+export type AnilistRail = { key: string; title: string; metas: Meta[] };
+
+export const RAIL_ORDER: Array<{ key: string; title: string; statuses: MediaListStatus[] }> = [
+  { key: "watching", title: "Watching", statuses: ["CURRENT", "REPEATING"] },
+  { key: "planning", title: "Plan to Watch", statuses: ["PLANNING"] },
+  { key: "completed", title: "Completed", statuses: ["COMPLETED"] },
+  { key: "paused", title: "On Hold", statuses: ["PAUSED"] },
+  { key: "dropped", title: "Dropped", statuses: ["DROPPED"] },
+];
+
+const SEED_STATUSES: MediaListStatus[] = ["COMPLETED", "CURRENT", "REPEATING"];
+const MIN_PER_RAIL = 1;
+const MIN_RECS = 4;
+
+function buildStatusRails(groups: AnilistListGroup[]): AnilistRail[] {
+  const entriesByStatus = new Map(groups.map((g) => [g.status, g.entries]));
+  const out: AnilistRail[] = [];
+  for (const rail of RAIL_ORDER) {
+    const entries = rail.statuses.flatMap((s) => entriesByStatus.get(s) ?? []);
+    const metas = entries.map(anilistEntryToMeta).filter((m): m is Meta => m != null);
+    if (metas.length >= MIN_PER_RAIL) out.push({ key: rail.key, title: rail.title, metas });
+  }
+  return out;
+}
+
+export type AnilistRailsState = { rails: AnilistRail[]; loading: boolean; error: boolean };
+
+const IDLE: AnilistRailsState = { rails: [], loading: false, error: false };
+
+export function useAnilistAnimeRails(): AnilistRail[] {
+  return useAnilistAnimeRailsState().rails;
+}
+
+export function useAnilistAnimeRailsState(): AnilistRailsState & { retry: () => void } {
+  const { isConnected, session } = useAnilist();
+  const [state, setState] = useState<AnilistRailsState>(IDLE);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt(value => value + 1), []);
+
+  useEffect(() => {
+    if (!isConnected || !session) {
+      setState(IDLE);
+      return;
+    }
+    let cancelled = false;
+    const userId = session.userId;
+    const seed = readCachedCollection(userId);
+    setState({ rails: seed ? buildStatusRails(seed) : [], loading: true, error: false });
+    (async () => {
+      const groups = await fetchMediaListCollection(userId);
+      if (cancelled) return;
+      const out = buildStatusRails(groups);
+      // Recommendations are optional: never hold the user's own lists behind them.
+      setState({ rails: out, loading: false, error: false });
+      const entriesByStatus = new Map(groups.map((g) => [g.status, g.entries]));
+      const excludeIds = new Set<number>();
+      for (const g of groups) for (const e of g.entries) excludeIds.add(e.media.id);
+
+      const seedIds = SEED_STATUSES.flatMap((s) =>
+        (entriesByStatus.get(s) ?? []).map((e) => e.media.id),
+      );
+      const recs = seedIds.length > 0 ? await fetchAnilistRecommendations(seedIds, excludeIds).catch(() => []) : [];
+      if (cancelled) return;
+      setState({
+        rails:
+          recs.length >= MIN_RECS
+            ? [{ key: "recommended", title: "Recommended for you", metas: recs.slice(0, 40) }, ...out]
+            : out,
+        loading: false,
+        error: false,
+      });
+    })().catch((e) => {
+      console.error("Failed to fetch AniList lists", e);
+      if (!cancelled) setState((s) => ({ rails: s.rails, loading: false, error: true }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, session?.userId, session?.accessToken, attempt]);
+
+  return { ...state, retry };
+}

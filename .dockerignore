@@ -1,0 +1,16 @@
+node_modules/
+.pnpm-store/
+dist/
+build/
+src-tauri/target/
+src-tauri/binaries/
+compass-core/target/
+.git/
+.github/
+.vscode/
+.kiro/
+*.log
+Dockerfile
+docker-compose.yaml
+.dockerignore
+history.txt

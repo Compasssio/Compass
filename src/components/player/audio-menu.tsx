@@ -1,0 +1,362 @@
+import { Check, Languages, RotateCcw, Search, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Flag } from "@/components/flag";
+import type { TrackInfo } from "@/lib/player/bridge";
+import { modalOverlayClose, modalOverlayEmitState, modalOverlayOpen } from "@/lib/modal-overlay";
+import { languageName, normalizeLang, trackLanguageName } from "@/lib/subtitles/language";
+import { useT } from "@/lib/i18n";
+import { useMenuSide } from "./menu-side";
+import { Tooltip } from "./transport/tooltip";
+import { watchOutsideMouseDown } from "@/lib/player/overlay-dismiss";
+
+type Props = {
+  tracks: TrackInfo[];
+  selectedId: string | null;
+  delaySec: number;
+  engine: "html5" | "mpv";
+  onSelect: (id: string) => void;
+  onDelay: (sec: number) => void;
+  onOpenChange?: (open: boolean) => void;
+  useOverlayPopup?: boolean;
+  iconUrl?: string;
+};
+
+function buildAudioOverlayState(props: Props) {
+  return {
+    tracks: props.tracks,
+    selectedId: props.selectedId,
+    delaySec: props.delaySec,
+    engine: props.engine,
+  };
+}
+
+export function AudioMenu(props: Props) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [forceInline, setForceInline] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const { measure } = useMenuSide(wrap, 360);
+  const useOverlay = props.useOverlayPopup === true;
+  const propsRef = useRef(props);
+  propsRef.current = props;
+  const onOpenChange = props.onOpenChange;
+  useEffect(() => {
+    onOpenChange?.(open && (forceInline || !useOverlay));
+  }, [open, forceInline, useOverlay, onOpenChange]);
+
+  useEffect(() => {
+    if (useOverlay) return;
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    return watchOutsideMouseDown(close);
+  }, [open, useOverlay]);
+
+  useEffect(() => {
+    if (!useOverlay) return;
+    const offs: Array<Promise<UnlistenFn>> = [];
+    offs.push(
+      listen<{ id: string }>("modal://audio/select", (e) => {
+        propsRef.current.onSelect(e.payload.id);
+      }),
+    );
+    offs.push(
+      listen<{ sec: number }>("modal://audio/delay", (e) => {
+        propsRef.current.onDelay(e.payload.sec);
+      }),
+    );
+    offs.push(listen("modal://closed", () => setOpen(false)));
+    return () => offs.forEach((p) => p.then((fn) => fn()).catch(() => {}));
+  }, [useOverlay]);
+
+  useEffect(() => {
+    if (!useOverlay || !open) return;
+    void modalOverlayEmitState("audio", buildAudioOverlayState(props));
+  }, [useOverlay, open, props.tracks, props.selectedId, props.delaySec, props.engine]);
+
+  useEffect(() => {
+    return () => {
+      if (useOverlay && open) void modalOverlayClose();
+    };
+  }, [useOverlay, open]);
+
+  const handleClick = () => {
+    if (!open) measure();
+    if (!useOverlay) {
+      setOpen((v) => !v);
+      return;
+    }
+    if (open) {
+      void modalOverlayClose();
+      setOpen(false);
+      setForceInline(false);
+    } else {
+      void modalOverlayOpen("audio", buildAudioOverlayState(propsRef.current))
+        .then(() => {
+          setOpen(true);
+          setForceInline(false);
+        })
+        .catch(() => {
+          setOpen(true);
+          setForceInline(true);
+        });
+    }
+  };
+
+  return (
+    <div ref={wrap} className="relative">
+      <Tooltip label={t("Audio tracks")}>
+        <button
+          type="button"
+          onClick={handleClick}
+          aria-label={t("Audio")}
+          className={`flex h-12 w-12 items-center justify-center rounded-full transition-colors ${
+            open ? "bg-white/22 text-white" : "text-white/85 hover:bg-white/10 hover:text-white"
+          }`}
+        >
+          {props.iconUrl ? (
+            <img src={props.iconUrl} alt="" className="h-[22px] w-[22px] shrink-0 select-none object-contain" draggable={false} />
+          ) : (
+            <Languages size={19} strokeWidth={2} />
+          )}
+        </button>
+      </Tooltip>
+      {open && (forceInline || !useOverlay) && (
+        <div className="fixed end-14 bottom-[150px] flex max-h-[calc(100vh-174px)] w-[360px] max-w-[calc(100vw-72px)] flex-col overflow-hidden rounded-md bg-elevated shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] animate-menu-pop">
+          <AudioMenuBody {...props} onClose={() => setOpen(false)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function AudioMenuBody(props: Props & { onClose: () => void }) {
+  return <MenuBody {...props} />;
+}
+
+/** Two or three tracks are read at a glance; a dozen dubs are not. */
+const SEARCH_FROM = 5;
+
+const fold = (text: string) => text.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
+
+/** Finds a language typed in its own script as readily as in English. */
+function trackMatches(track: TrackInfo, query: string): boolean {
+  const wanted = normalizeLang(query);
+  if (wanted && track.lang && normalizeLang(track.lang) === wanted) return true;
+  const haystack = [track.title, track.lang && languageName(track.lang), track.codec, track.channels];
+  return fold(haystack.filter(Boolean).join(" ")).includes(fold(query));
+}
+
+function MenuBody(props: Props & { onClose: () => void }) {
+  const t = useT();
+  const { tracks, selectedId, onSelect, onClose, delaySec, onDelay, engine } = props;
+  const [query, setQuery] = useState("");
+  const searchable = tracks.length >= SEARCH_FROM;
+  const shown = useMemo(() => {
+    const term = query.trim();
+    if (!searchable || !term) return tracks;
+    return tracks.filter((track) => trackMatches(track, term));
+  }, [tracks, query, searchable]);
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <header className="flex flex-col gap-2.5 border-b border-edge-soft px-4 py-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="text-[13.5px] font-semibold text-ink">{t("Audio")}</span>
+            {tracks.length > 0 && (
+              <span className="text-[11.5px] tabular-nums text-ink-subtle">{shown.length}</span>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            aria-label={t("Close")}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-raised hover:text-ink"
+          >
+            <X size={13} strokeWidth={2.2} />
+          </button>
+        </div>
+        {searchable && (
+          <div className="flex items-center gap-2 rounded-lg bg-raised px-2.5 py-1.5">
+            <Search size={13} strokeWidth={2.2} className="shrink-0 text-ink-subtle" aria-hidden />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t("Search audio language")}
+              aria-label={t("Search audio language")}
+              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-ink outline-none placeholder:text-ink-subtle"
+            />
+            {query && (
+              <button
+                onClick={() => setQuery("")}
+                aria-label={t("Clear")}
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-ink-subtle transition-colors hover:bg-elevated hover:text-ink"
+              >
+                <X size={11} strokeWidth={2.4} />
+              </button>
+            )}
+          </div>
+        )}
+      </header>
+
+      <div className="flex-1 overflow-y-auto p-2">
+        {searchable && query.trim() && shown.length === 0 ? (
+          <div className="px-3 py-4 text-[12.5px] leading-relaxed text-ink-muted">
+            {t("No audio track in that language.")}
+          </div>
+        ) : (
+          <TrackSection
+            tracks={shown}
+            selectedId={selectedId}
+            engine={engine}
+            onSelect={(id) => {
+              onSelect(id);
+              onClose();
+            }}
+          />
+        )}
+      </div>
+
+      <DelayRow delay={delaySec} onDelay={onDelay} disabled={engine === "html5"} />
+    </div>
+  );
+}
+
+function TrackSection({
+  tracks,
+  selectedId,
+  engine,
+  onSelect,
+}: {
+  tracks: TrackInfo[];
+  selectedId: string | null;
+  engine: "html5" | "mpv";
+  onSelect: (id: string) => void;
+}) {
+  const tr = useT();
+  if (tracks.length === 0) {
+    return (
+      <div className="px-3 py-4 text-[12.5px] leading-relaxed text-ink-muted">
+        {engine === "mpv"
+          ? tr("This file has one audio track.")
+          : tr(
+              "Track switching isn't supported on the current engine. The file's default audio is playing.",
+            )}
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-0.5">
+      {tracks.map((t) => {
+        const isSel = t.id === selectedId;
+        return (
+          <button
+            key={t.id}
+            onClick={() => onSelect(t.id)}
+            className={`flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-start transition-colors ${
+              isSel ? "bg-elevated ring-1 ring-edge" : "hover:bg-canvas/55"
+            }`}
+          >
+            <span
+              className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
+                isSel ? "bg-accent text-canvas" : "bg-raised text-ink-subtle"
+              }`}
+              aria-hidden
+            >
+              {isSel ? <Check size={9} strokeWidth={3} /> : null}
+            </span>
+            {t.lang && (
+              <span className="mt-0.5 shrink-0">
+                <Flag language={trackLanguageName(t.lang, t.title)} size="sm" showLabel={false} />
+              </span>
+            )}
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="truncate text-[12.5px] font-medium leading-snug text-ink">
+                {trackTitle(t, tr)}
+              </span>
+              <span className="truncate text-[10.5px] uppercase tracking-[0.1em] text-ink-subtle">
+                {trackSubtitle(t, tr)}
+              </span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function trackTitle(t: TrackInfo, tr: (key: string) => string): string {
+  if (t.title && t.title.trim() && t.title !== t.lang) return t.title;
+  if (t.lang) return languageName(t.lang);
+  return t.label || tr("Track");
+}
+
+function trackSubtitle(t: TrackInfo, tr: (key: string) => string): string {
+  const parts: string[] = [];
+  if (t.lang) parts.push(trackLanguageName(t.lang, t.title));
+  if (t.codec) parts.push(t.codec);
+  if (t.channels) parts.push(t.channels);
+  if (t.default) parts.push(tr("Default"));
+  return parts.filter(Boolean).join(" · ");
+}
+
+function DelayRow({
+  delay,
+  onDelay,
+  disabled,
+}: {
+  delay: number;
+  onDelay: (sec: number) => void;
+  disabled: boolean;
+}) {
+  const tr = useT();
+  const round = (v: number) => Math.round(v * 100) / 100;
+  return (
+    <div
+      className={`flex flex-col gap-2.5 px-4 py-3 border-t border-edge-soft bg-canvas/30 ${
+        disabled ? "opacity-40" : ""
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-semibold text-ink">
+          {tr("Sync Offset")}
+        </span>
+        <div className="flex items-center gap-2">
+          <span className={`font-mono text-[13px] font-bold tabular-nums ${delay !== 0 ? "text-accent" : "text-ink-muted"}`}>
+            {delay > 0 ? "+" : ""}
+            {delay.toFixed(2)}s
+          </span>
+          {delay !== 0 && !disabled && (
+            <button
+              onClick={() => onDelay(0)}
+              aria-label={tr("Reset sync")}
+              className="flex h-6 w-6 items-center justify-center rounded-md bg-raised text-ink-subtle transition-colors hover:bg-elevated hover:text-ink"
+            >
+              <RotateCcw size={12} strokeWidth={2.2} />
+            </button>
+          )}
+        </div>
+      </div>
+      
+      <div className="flex items-stretch overflow-hidden rounded-lg bg-raised">
+        <button
+          disabled={disabled}
+          onClick={() => onDelay(round(delay - 0.1))}
+          className="flex-1 px-2 py-1.5 text-[12px] font-semibold tabular-nums text-ink-muted transition-colors hover:bg-elevated hover:text-ink active:scale-95 disabled:cursor-not-allowed"
+        >
+          −0.1s
+        </button>
+        <div className="w-px bg-edge-soft/50" />
+        <button
+          disabled={disabled}
+          onClick={() => onDelay(round(delay + 0.1))}
+          className="flex-1 px-2 py-1.5 text-[12px] font-semibold tabular-nums text-ink-muted transition-colors hover:bg-elevated hover:text-ink active:scale-95 disabled:cursor-not-allowed"
+        >
+          +0.1s
+        </button>
+      </div>
+    </div>
+  );
+}
+

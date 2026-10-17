@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Compass
+Comment=A Stremio client built for adventure
+Exec=compass %U
+Icon=site.compass.Compass
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Player;
+MimeType=x-scheme-handler/compass;x-scheme-handler/stremio;
+StartupNotify=true
+StartupWMClass=site.compass.Compass

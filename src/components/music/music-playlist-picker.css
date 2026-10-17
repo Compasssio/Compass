@@ -1,0 +1,21 @@
+.music-playlist-picker { display: flex; flex-direction: column; gap: 16px; min-height: 0; max-height: 86dvh; padding: 24px; }
+.music-playlist-picker > :not(.music-playlist-destination-list, .music-spotify-destination) { flex-shrink: 0; }
+.music-playlist-picker .music-spotify-destination { min-height: 0; }
+.music-playlist-destination-search { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 6px; background: var(--color-elevated); color: var(--color-ink-subtle); }
+.music-playlist-destination-search input { flex: 1; min-width: 0; width: 100%; padding: 10px 0; outline: none; color: var(--color-ink); font-size: 13px; }
+.music-playlist-destination-search:focus-within { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.music-playlist-destination-search input::placeholder { color: var(--color-ink-subtle); }
+.music-playlist-destination-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; align-content: start; min-height: 0; max-height: min(420px, 42dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: auto; scrollbar-gutter: stable; scrollbar-color: auto; }
+.music-playlist-destination-list::-webkit-scrollbar { width: 6px; }
+.music-playlist-destination-list::-webkit-scrollbar-thumb { border-radius: 6px; background: var(--color-ink-subtle); }
+.music-playlist-destination-list button { min-height: 44px; text-align: start; }
+.music-playlist-destination-cell { display: flex; width: 100%; min-width: 0; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; color: var(--color-ink); transition: background-color 120ms ease-out; }
+.music-playlist-destination-cell:hover:not(:disabled) { background: var(--color-raised); }
+.music-playlist-destination-cell .music-playlist-destination-cover { flex: 0 0 auto; width: 44px; border-radius: 6px; }
+.music-playlist-destination-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1px; font-size: 13px; }
+.music-playlist-destination-copy small { font-size: 11px; color: var(--color-ink-subtle); }
+.music-playlist-destination-empty { grid-column: 1 / -1; padding: 8px 12px; font-size: 13px; color: var(--color-ink-subtle); }
+.music-playlist-picker button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.music-playlist-picker-close { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; color: var(--color-ink-muted); border-radius: 6px; }
+.music-playlist-picker-close:hover { color: var(--color-ink); background: var(--color-elevated); }
+@media (max-height: 660px) { .music-playlist-picker { gap: 10px; padding: 18px; } .music-playlist-destination-list { max-height: 27dvh; } }

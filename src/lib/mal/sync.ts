@@ -1,0 +1,210 @@
+import { activeProfileId } from "@/lib/active-profile-id";
+import { malRequest, MalApiError } from "./client";
+import { resolveMalMediaId } from "./mutations";
+import { isAuthenticated, getSession } from "./session";
+
+export type SyncError = "update-not-confirmed" | "unreachable";
+
+export type SyncEvent =
+  | { kind: "syncing"; title: string; episode: number }
+  | { kind: "ok"; title: string; episode: number }
+  | { kind: "watching"; title: string }
+  | { kind: "error"; title: string; error: SyncError };
+
+const listeners = new Set<(e: SyncEvent) => void>();
+let last: SyncEvent | null = null;
+
+export function subscribeSync(fn: (e: SyncEvent) => void): () => void {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+}
+
+export function getLastSync(): SyncEvent | null {
+  return last;
+}
+
+function emit(e: SyncEvent): void {
+  last = e;
+  for (const fn of listeners) fn(e);
+}
+
+const SENT_KEY_BASE = "compass.mal.synced.v1";
+function sentKey(): string {
+  return `${SENT_KEY_BASE}.${activeProfileId()}`;
+}
+type SentValue = number | { p: number; t: number };
+type SentMap = Record<string, SentValue>;
+
+// Only collapses the per-tick writes of one playback session. Kept indefinitely it
+// outlives the server, so removing the entry there could never be re-synced.
+const SENT_TTL_MS = 60 * 1000;
+
+function sentProgress(map: SentMap, key: string): { p: number; t: number } | null {
+  const value = map[key];
+  if (typeof value === "number") return { p: value, t: 0 };
+  if (value && typeof value === "object" && typeof value.p === "number") {
+    return { p: value.p, t: typeof value.t === "number" ? value.t : 0 };
+  }
+  return null;
+}
+
+function rememberSent(map: SentMap, key: string, progress: number): void {
+  map[key] = { p: progress, t: Date.now() };
+}
+
+function loadSent(): SentMap {
+  try {
+    return JSON.parse(localStorage.getItem(sentKey()) ?? "{}") as SentMap;
+  } catch {
+    return {};
+  }
+}
+
+function saveSent(map: SentMap): void {
+  try {
+    localStorage.setItem(sentKey(), JSON.stringify(map));
+  } catch {
+    return;
+  }
+}
+
+type EntryResponse = {
+  num_episodes: number | null;
+  my_list_status: {
+    num_episodes_watched: number;
+    status: string;
+    is_rewatching: boolean;
+  } | null;
+};
+
+type SaveResponse = {
+  num_episodes_watched: number;
+  status: string;
+};
+
+const inflight = new Set<string>();
+const watchingMarked = new Set<string>();
+
+export function resetForProfile(): void {
+  inflight.clear();
+  watchingMarked.clear();
+}
+
+export async function markMalWatching(compassId: string, title: string): Promise<void> {
+  if (!isAuthenticated()) return;
+  const profile = activeProfileId();
+  const session = getSession();
+  const owned = () => activeProfileId() === profile && getSession() === session;
+  if (watchingMarked.has(compassId)) return;
+  watchingMarked.add(compassId);
+  try {
+    const malId = await resolveMalMediaId(compassId);
+    if (!owned() || malId == null) {
+      watchingMarked.delete(compassId);
+      return;
+    }
+    const cur = await malRequest<EntryResponse>(
+      `/anime/${malId}?fields=num_episodes,my_list_status`,
+    );
+    if (!owned()) return;
+    if (cur?.my_list_status && cur.my_list_status.status !== "plan_to_watch") return;
+    const total = cur?.num_episodes ?? 0;
+    if (cur?.my_list_status && total > 0 && cur.my_list_status.num_episodes_watched >= total)
+      return;
+    await malRequest<SaveResponse>(`/anime/${malId}/my_list_status`, {
+      method: "PATCH",
+      body: new URLSearchParams({ status: "watching" }),
+    });
+    if (owned()) emit({ kind: "watching", title });
+  } catch (e) {
+    watchingMarked.delete(compassId);
+    if (e instanceof MalApiError && e.status === 401) return;
+  }
+}
+
+export async function syncMalProgress(
+  compassId: string,
+  episode: number | undefined,
+  title: string,
+  season?: number,
+): Promise<void> {
+  if (!isAuthenticated()) return;
+  const profile = activeProfileId();
+  const session = getSession();
+  const owned = () => activeProfileId() === profile && getSession() === session;
+  const ep = episode ?? 1;
+  if (!Number.isInteger(ep) || ep < 1) return;
+
+  const sent = loadSent();
+  const sentKey = `${compassId}|${season ?? ""}|${ep}`;
+  const prevSent = sentProgress(sent, sentKey);
+  if (prevSent && Date.now() - prevSent.t < SENT_TTL_MS && prevSent.p >= ep) {
+    return;
+  }
+
+  const flightKey = `${profile}|${compassId}|${ep}`;
+  if (inflight.has(flightKey)) {
+    return;
+  }
+  inflight.add(flightKey);
+
+  try {
+    const malId = await resolveMalMediaId(compassId);
+    if (!owned() || malId == null) return;
+
+    const cur = await malRequest<EntryResponse>(
+      `/anime/${malId}?fields=num_episodes,my_list_status`,
+    );
+
+    // Never overwrite entries the user completed or marked as re-watching;
+    // auto-sync would otherwise flip completed/rewatching back to "watching".
+    if (!owned()) return;
+    const listStatus = cur?.my_list_status;
+    if (listStatus && (listStatus.status === "completed" || listStatus.is_rewatching)) {
+      return;
+    }
+
+    const current = cur?.my_list_status?.num_episodes_watched ?? 0;
+    const total = cur?.num_episodes ?? 0;
+    // The caller resolves entry-relative numbering before reaching this layer.
+    const target = ep;
+    if (total > 0 && target > total) return;
+    if (target <= current) {
+      rememberSent(sent, sentKey, Math.max(prevSent?.p ?? 0, current));
+      saveSent(sent);
+      return;
+    }
+
+    const status = total > 0 && target >= total ? "completed" : "watching";
+    emit({ kind: "syncing", title, episode: target });
+
+    const saved = await malRequest<{ num_episodes_watched: number }>(
+      `/anime/${malId}/my_list_status`,
+      {
+        method: "PATCH",
+        body: new URLSearchParams({
+          num_watched_episodes: String(target),
+          status,
+        }),
+      },
+    );
+
+    if (!owned()) return;
+    if (saved?.num_episodes_watched === target) {
+      rememberSent(sent, sentKey, target);
+      saveSent(sent);
+      emit({ kind: "ok", title, episode: target });
+    } else {
+      // Unconfirmed writes stay retryable; recording them as sent would suppress retries.
+      emit({ kind: "error", title, error: "update-not-confirmed" });
+    }
+  } catch (e) {
+    if (!owned()) return;
+    if (e instanceof MalApiError && e.status === 401) return;
+    emit({ kind: "error", title, error: "unreachable" });
+  } finally {
+    inflight.delete(flightKey);
+  }
+}

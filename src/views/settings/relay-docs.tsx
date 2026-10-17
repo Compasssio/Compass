@@ -1,0 +1,285 @@
+import { useEffect, useRef, useState } from "react";
+import { DownloadMenu, SavePill } from "./relay-docs-export";
+import { useT } from "@/lib/i18n";
+
+export function RelayDocs({ onBack }: { onBack: () => void }) {
+  const t = useT();
+  const docsRef = useRef<HTMLDivElement>(null);
+  const [savedPath, setSavedPath] = useState<string | null>(null);
+  useEffect(() => {
+    if (!savedPath) return;
+    const to = window.setTimeout(() => setSavedPath(null), 7000);
+    return () => window.clearTimeout(to);
+  }, [savedPath]);
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-elevated px-4 py-3">
+        <button
+          onClick={onBack}
+          className="flex h-11 items-center gap-2 rounded-[8px] bg-canvas px-4 text-[15px] font-semibold text-ink transition-colors hover:bg-raised"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden className="dir-icon">
+            <path
+              d="M15 6l-6 6 6 6"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          {t("Back to relay")}
+        </button>
+        <div className="flex items-center gap-3">
+          <span className="compass-settings-label">
+            {t("Documentation")}
+          </span>
+          <DownloadMenu docsRef={docsRef} onSaved={setSavedPath} />
+        </div>
+      </div>
+
+      <div ref={docsRef} className="flex flex-col gap-8">
+      <header className="flex flex-col gap-2 pb-2">
+        <p className="text-[13px] font-bold uppercase leading-[17px] tracking-[0.72px] text-accent">
+          {t("Self-host")}
+        </p>
+        <h2 className="font-display text-[32px] font-medium leading-tight tracking-tight text-ink">
+          {t("Run your own Compass Relay")}
+        </h2>
+        <p className="max-w-[66ch] text-[15.5px] leading-[22px] text-ink-muted">
+          {t("Two paths: Compass handles the deploy for you, or you do it yourself with wrangler.")}
+        </p>
+      </header>
+
+      <DocsBlock>
+        <DocsH2>{t("Overview")}</DocsH2>
+        <DocsP>
+          {t("The Compass relay is a Cloudflare Worker that hosts WebSocket rooms for Watch Together. Each user runs their own. There is no central Compass server.")}
+        </DocsP>
+        <DocsP>
+          {t("Source:")} <DocsCode>src-tauri/relay/worker.js</DocsCode>. {t("About 200 lines of JavaScript, no dependencies. Read it before deploying if you want to know what runs.")}
+        </DocsP>
+      </DocsBlock>
+
+      <DocsBlock>
+        <DocsH2>{t("Requirements")}</DocsH2>
+        <DocsList>
+          <li>{t("A free Cloudflare account.")}</li>
+          <li>{t("About two minutes for the auto-deploy path.")}</li>
+          <li>
+            {t("For the manual path:")} <DocsCode>node</DocsCode> {t("20+ and")} <DocsCode>wrangler</DocsCode> {t("CLI.")}
+          </li>
+        </DocsList>
+      </DocsBlock>
+
+      <DocsBlock>
+        <DocsH2>{t("Auto-deploy from Compass")}</DocsH2>
+        <DocsP>
+          {t("Easiest path. Compass uploads the worker, creates the Durable Object namespace, and stores the resulting URL.")}
+        </DocsP>
+        <DocsOl>
+          <li>{t("Open Settings, then Compass Relay.")}</li>
+          <li>
+            {t("Click")} <DocsKbd>{t("Deploy a relay")}</DocsKbd>.
+          </li>
+          <li>
+            {t("Generate a Cloudflare API token with")} <DocsCode>Workers Scripts: Edit</DocsCode> {t("and")} <DocsCode>Account: Read</DocsCode> {t("permissions at")} <DocsCode>dash.cloudflare.com/profile/api-tokens</DocsCode>. {t("Paste it into Compass.")}
+          </li>
+          <li>{t("Pick the Cloudflare account to deploy under.")}</li>
+          <li>
+            {t("Wait for the upload to finish. The relay URL gets written to")} <DocsCode>togetherRelayUrl</DocsCode> {t("in Compass settings.")}
+          </li>
+        </DocsOl>
+      </DocsBlock>
+
+      <DocsBlock>
+        <DocsH2>{t("Manual deploy with wrangler")}</DocsH2>
+        <DocsP>
+          {t("For users who want to deploy themselves or already have a wrangler workflow.")}
+        </DocsP>
+        <DocsOl>
+          <li>
+            {t("Install wrangler and authenticate:")}
+            <DocsPre>{`npm install -g wrangler\nwrangler login`}</DocsPre>
+          </li>
+          <li>
+            {t("Save the worker source. Copy")} <DocsCode>src-tauri/relay/worker.js</DocsCode> {t("from the Compass repo into a new directory as")} <DocsCode>worker.js</DocsCode>.
+          </li>
+          <li>
+            {t("Save this")} <DocsCode>wrangler.toml</DocsCode> {t("next to it:")}
+            <DocsPre>{`name = "compass-together-relay"\nmain = "worker.js"\ncompatibility_date = "2026-05-01"\n\n[[durable_objects.bindings]]\nname = "ROOM"\nclass_name = "Room"\n\n[[migrations]]\ntag = "v1"\nnew_sqlite_classes = ["Room"]`}</DocsPre>
+          </li>
+          <li>
+            {t("Deploy:")}
+            <DocsPre>wrangler deploy</DocsPre>
+          </li>
+          <li>
+            {t("Note the URL Cloudflare returns. It looks like")} <DocsCode>https://compass-together-relay.&lt;subdomain&gt;.workers.dev</DocsCode>.
+          </li>
+          <li>
+            {t("In Compass: Settings, Compass Relay, then")} <DocsKbd>{t("Use a different URL")}</DocsKbd>. {t("Paste the URL with")} <DocsCode>wss://</DocsCode> {t("as the scheme instead of")} <DocsCode>https://</DocsCode>.
+          </li>
+        </DocsOl>
+      </DocsBlock>
+
+      <DocsBlock>
+        <DocsH2>{t("Verify it works")}</DocsH2>
+        <DocsP>
+          {t("Settings, Compass Relay, then")} <DocsKbd>{t("Run test")}</DocsKbd>.
+        </DocsP>
+        <DocsP>
+          {t("The test calls")} <DocsCode>/health</DocsCode> {t("and confirms the worker is reachable and running a current version. A passing test means Watch Together rooms will connect.")}
+        </DocsP>
+        <DocsP>
+          {t("If the Watch Together popover shows an outdated-relay banner, redeploying with the steps above is the fix. The banner clears automatically the next time you connect once the relay reports the current version.")}
+        </DocsP>
+      </DocsBlock>
+
+      <DocsBlock>
+        <DocsH2>{t("Sharing your relay")}</DocsH2>
+        <DocsP>
+          {t("A relay URL is shareable. Anyone with the URL can join Watch Together rooms hosted on your relay. The unique")} <DocsCode>workers.dev</DocsCode> {t("subdomain acts as the access token. There is no login.")}
+        </DocsP>
+        <DocsP>
+          {t("To run a public relay, post the")} <DocsCode>wss://</DocsCode> {t("URL on r/Stremio or wherever your community lives. Other Compass users paste it into Settings, Compass Relay,")} <DocsKbd>{t("Use a different URL")}</DocsKbd>.
+        </DocsP>
+      </DocsBlock>
+
+      <DocsBlock>
+        <DocsH2>{t("Costs")}</DocsH2>
+        <DocsP>{t("Cloudflare Workers free tier:")}</DocsP>
+        <DocsList>
+          <li>{t("100,000 requests per day.")}</li>
+          <li>{t("10ms CPU time per request.")}</li>
+          <li>{t("Unlimited Durable Object storage at $0.20 per million reads.")}</li>
+        </DocsList>
+        <DocsP>
+          {t("A typical Watch Together session uses a few hundred messages per hour. Solo and small-group use stays well under free tier limits.")}
+        </DocsP>
+        <DocsP>
+          {t("If you exceed free tier, the Workers Paid plan is $5 per month and bumps the request allowance to 10 million per day.")}
+        </DocsP>
+      </DocsBlock>
+
+      <DocsBlock>
+        <DocsH2>{t("Troubleshooting")}</DocsH2>
+        <DocsTable
+          rows={[
+            {
+              symptom: t("Health check returns 5xx"),
+              cause: t("Worker crashed or hit memory limits"),
+              fix: t("Check logs in Cloudflare dashboard, then redeploy"),
+            },
+            {
+              symptom: t("Connection refused / DNS does not resolve"),
+              cause: t("Worker deleted or URL wrong"),
+              fix: t("Re-run deploy or paste the correct URL"),
+            },
+            {
+              symptom: t("Watch Together rooms drop after 6 hours"),
+              cause: t("Durable Object idle eviction"),
+              fix: t("Expected. Rooms recreate on next join."),
+            },
+          ]}
+        />
+      </DocsBlock>
+
+      <DocsBlock>
+        <DocsH2>{t("What the worker does")}</DocsH2>
+        <DocsList>
+          <li>
+            <DocsCode>GET /health</DocsCode>: {t("returns JSON with the worker version. Used by the test button.")}
+          </li>
+          <li>
+            <DocsCode>GET /r/&lt;code&gt;</DocsCode> {t("with a WebSocket upgrade: opens a Watch Together room. State is held in a Durable Object, no persistence beyond the active session.")}
+          </li>
+        </DocsList>
+      </DocsBlock>
+      </div>
+      {savedPath && <SavePill path={savedPath} onDismiss={() => setSavedPath(null)} />}
+    </div>
+  );
+}
+
+function DocsBlock({ children }: { children: React.ReactNode }) {
+  return <section className="flex flex-col gap-3">{children}</section>;
+}
+
+function DocsH2({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="font-display text-[20px] font-medium tracking-tight text-ink">{children}</h3>
+  );
+}
+
+function DocsP({ children }: { children: React.ReactNode }) {
+  return <p className="max-w-[70ch] text-[15.5px] leading-[22px] text-ink-muted">{children}</p>;
+}
+
+function DocsList({ children }: { children: React.ReactNode }) {
+  return (
+    <ul className="ms-5 flex max-w-[70ch] list-disc flex-col gap-1.5 text-[15.5px] leading-[22px] text-ink-muted marker:text-ink-subtle">
+      {children}
+    </ul>
+  );
+}
+
+function DocsOl({ children }: { children: React.ReactNode }) {
+  return (
+    <ol className="ms-5 flex max-w-[70ch] list-decimal flex-col gap-2.5 text-[15.5px] leading-[22px] text-ink-muted marker:font-semibold marker:text-ink-subtle">
+      {children}
+    </ol>
+  );
+}
+
+export function DocsCode({ children }: { children: React.ReactNode }) {
+  return (
+    <code className="rounded-md bg-elevated px-1.5 py-0.5 font-mono text-[15.5px] text-ink">
+      {children}
+    </code>
+  );
+}
+
+function DocsKbd({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="rounded-md bg-raised px-2 py-0.5 font-mono text-[15.5px] font-medium text-ink">
+      {children}
+    </kbd>
+  );
+}
+
+function DocsPre({ children }: { children: React.ReactNode }) {
+  return (
+    <pre className="mt-2 overflow-x-auto rounded-md bg-elevated p-4 font-mono text-[15.5px] leading-[22px] text-ink">
+      {children}
+    </pre>
+  );
+}
+
+function DocsTable({
+  rows,
+}: {
+  rows: Array<{ symptom: string; cause: string; fix: string }>;
+}) {
+  const t = useT();
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[560px] border-separate border-spacing-y-1.5 text-start text-[15.5px] leading-[22px] text-ink-muted">
+        <thead className="text-[13px] font-bold uppercase leading-[17px] tracking-[0.72px] text-ink-subtle">
+          <tr>
+            <th className="px-4 pb-1 text-start font-semibold">{t("Symptom")}</th>
+            <th className="px-4 pb-1 text-start font-semibold">{t("Cause")}</th>
+            <th className="px-4 pb-1 text-start font-semibold">{t("Fix")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="align-top">
+              <td className="rounded-s-md bg-elevated px-4 py-3 font-medium text-ink">{r.symptom}</td>
+              <td className="bg-elevated px-4 py-3">{r.cause}</td>
+              <td className="rounded-e-md bg-elevated px-4 py-3">{r.fix}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

@@ -1,0 +1,149 @@
+import { ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { franchiseTags, isFranchiseExtra, type FranchiseEntry } from "@/lib/providers/anime-detail";
+import { useT } from "@/lib/i18n";
+import { UpcomingBadge } from "../badges";
+
+export function AnimeSeasonPicker({
+  franchise,
+  activeEntryId,
+  onSelectEntry,
+}: {
+  franchise: FranchiseEntry[];
+  activeEntryId: string;
+  onSelectEntry: (entryId: string) => void;
+}) {
+  const t = useT();
+  const [menu, setMenu] = useState<{
+    right: number;
+    top?: number;
+    bottom?: number;
+    maxH: number;
+  } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const open = menu != null;
+  const matchIdx = franchise.findIndex((f) => f.meta.id === activeEntryId);
+  const currentIdx = matchIdx >= 0 ? matchIdx : franchise.findIndex((f) => f.isCurrent);
+  const current = franchise[currentIdx];
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    const onScroll = (e: Event) => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      close();
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [menu]);
+
+  const openMenu = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const margin = 16;
+    const below = window.innerHeight - r.bottom - margin;
+    const above = r.top - margin;
+    const up = below < 260 && above > below;
+    const maxH = Math.max(160, Math.min(0.6 * window.innerHeight, up ? above : below));
+    const right = Math.max(margin, window.innerWidth - r.right);
+    setMenu(
+      up
+        ? { right, bottom: window.innerHeight - r.top + 8, maxH }
+        : { right, top: r.bottom + 8, maxH },
+    );
+  };
+
+  if (!current) return null;
+  const tags = franchiseTags(franchise);
+  const positionLabel = tags[currentIdx]?.short ?? `S${currentIdx + 1}`;
+  // Extras never belong here; they render under Movies & Specials buckets.
+  const seasonIdxs = tags
+    .map((tg, i) => (tg?.kind === "season" && !isFranchiseExtra(franchise[i]) ? i : -1))
+    .filter((i) => i >= 0);
+
+  const renderEntry = (i: number) => {
+    const f = franchise[i];
+    const isActive = i === currentIdx;
+    return (
+      <button
+        key={f.meta.id}
+        onClick={() => {
+          if (!isActive) onSelectEntry(f.meta.id);
+          setMenu(null);
+        }}
+        className={`flex w-full items-start gap-3 px-4 py-3 text-start transition-colors ${
+          isActive ? "bg-ink/10 text-ink" : "text-ink-muted hover:bg-raised hover:text-ink"
+        }`}
+      >
+        <span className="mt-0.5 font-mono text-[11px] text-ink-subtle">
+          {tags[i]?.short ?? `S${i + 1}`}
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex items-center gap-2 text-[13.5px] font-medium">
+            <span title={f.meta.name} className="truncate">
+              {f.meta.name}
+            </span>
+            {f.isUpcoming && <UpcomingBadge />}
+          </span>
+          <span className="text-[11.5px] text-ink-subtle">
+            {f.episodeCount
+              ? f.episodeCount === 1
+                ? t("{n} ep", { n: f.episodeCount })
+                : t("{n} eps", { n: f.episodeCount })
+              : ""}
+            {f.episodeCount && f.startDate ? "  ·  " : ""}
+            {f.startDate ? f.startDate.slice(0, 4) : f.isUpcoming ? "TBA" : ""}
+          </span>
+        </div>
+      </button>
+    );
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={() => (menu ? setMenu(null) : openMenu())}
+        className="flex h-10 items-center gap-2 rounded-full bg-white/[0.06] ps-4 pe-3 text-[13.5px] font-medium text-ink transition-colors hover:bg-white/[0.10]"
+      >
+        <span className="font-mono text-[11.5px] text-ink-subtle">{positionLabel}</span>
+        <span title={current.meta.name} className="max-w-[280px] truncate">
+          {current.meta.name}
+        </span>
+        {current.isUpcoming && <UpcomingBadge />}
+        <ChevronDown
+          size={15}
+          className={`text-ink-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {menu &&
+        createPortal(
+          <div
+            ref={menuRef}
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{ right: menu.right, top: menu.top, bottom: menu.bottom }}
+            className="animate-fade-in fixed z-[200] w-[360px] max-w-[min(360px,calc(100vw-3rem))] overflow-hidden rounded-lg border border-edge bg-elevated py-1.5 shadow-[0_18px_44px_-12px_rgba(0,0,0,0.6)]"
+          >
+            <div className="overflow-y-auto" style={{ maxHeight: menu.maxH }}>
+              {seasonIdxs.map(renderEntry)}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}

@@ -1,0 +1,66 @@
+name: Flatpak
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - flatpak/**
+      - src-tauri/**
+      - compass-core/**
+      - src/**
+      - public/**
+      - index.html
+      - vite.config.*
+      - tsconfig*.json
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/flatpak.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flatpak-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Flatpak tooling
+        run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder appstream desktop-file-utils ostree
+      - name: Configure Flathub
+        run: flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+      - name: Install pinned SDK
+        run: >-
+          flatpak install --user -y flathub
+          org.gnome.Platform//49 org.gnome.Sdk//49
+          org.freedesktop.Sdk.Extension.rust-stable//25.08
+          org.freedesktop.Sdk.Extension.node22//25.08
+      - name: Validate metadata
+        run: |
+          flatpak/update-flatpak.sh --check
+          desktop-file-validate flatpak/site.compass.Compass.desktop
+          appstreamcli validate --no-net flatpak/site.compass.Compass.metainfo.xml
+          flatpak-builder --show-manifest flatpak/site.compass.Compass.yml >/dev/null
+      - name: Build repository
+        run: flatpak-builder --user --force-clean --state-dir=.flatpak-work/state --repo=.flatpak-work/repo .flatpak-work/build flatpak/site.compass.Compass.yml
+      - name: Build single-file bundle
+        run: flatpak build-bundle .flatpak-work/repo Compass.flatpak site.compass.Compass
+      - name: Validate bundle
+        run: |
+          ostree init --repo=.flatpak-work/validation-repo --mode=archive-z2
+          flatpak build-import-bundle --update-appstream --no-update-summary .flatpak-work/validation-repo Compass.flatpak
+      - name: Upload Flatpak bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: Compass-flatpak-x86_64
+          path: Compass.flatpak
+          retention-days: 14
+          if-no-files-found: error

@@ -1,0 +1,1666 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SportsDockControls } from "./sports/dock-controls";
+import { useDockDrag, type DockSpot } from "./sports/use-dock-drag";
+import { readEmbedRect } from "@/lib/player/embed-rect";
+import { EmbeddedBroadcastPlayer } from "./sports/embedded-broadcast-player";
+import { resolveChromeTheme } from "@/lib/theme";
+import { useBigPicture } from "@/lib/big-picture";
+import { useActiveKid } from "@/lib/profiles";
+import { type PlayerBridge } from "@/lib/player/bridge";
+import { useDebridClients } from "@/lib/debrid/registry";
+import { useSettings } from "@/lib/settings";
+import { writePlayerVolume } from "@/lib/player-volume";
+import { nameColor } from "@/lib/together/colors";
+import { useTogether } from "@/lib/together/provider";
+import { buildPlayInvite } from "@/lib/together/build-invite";
+import { useView, type PlayerSrc, type PlayEpisode } from "@/lib/view";
+import { useQueue, useSleepAtEnd, queueIndexOf, setQueuePlaying } from "@/lib/queue";
+import { useSkipSegments, useAdSegments } from "@/lib/skip-intro";
+import { withinAdWindow } from "@/lib/ad-report/window";
+import { isLocalUrl } from "@/lib/player/local-url";
+import { isLivePlaybackSrc } from "@/lib/player/live-src";
+import { hasPlaybackStartedForStallCheck, stallWaitMs } from "@/lib/player/stall-wait";
+import { useAuth } from "@/lib/auth";
+import { embedFlags } from "./player/player-utils";
+import { useFullscreen } from "./player/hooks/use-fullscreen";
+import { useSvpGuard } from "./player/hooks/use-svp-guard";
+import { usePlayerCast } from "./player/hooks/use-player-cast";
+import { useCastReturnPublish } from "./player/hooks/use-cast-return-publish";
+import { useChromeConfig } from "./player/hooks/use-chrome-config";
+import { useEverPlayed } from "./player/hooks/use-ever-played";
+import { useDrawMode } from "./player/hooks/use-draw-mode";
+import { useChromeVisibility } from "./player/hooks/use-chrome-visibility";
+import { useAutoRetry } from "./player/hooks/use-auto-retry";
+import { useWakeReconnect } from "./player/hooks/use-wake-reconnect";
+import { useEngineStats } from "./player/hooks/use-engine-stats";
+import { useContentAdvisory } from "./player/hooks/use-content-advisory";
+import {
+  getPlaybackPosition,
+  subscribePlaybackClock,
+  resolvePlaybackDownloadedFraction,
+  setPlaybackDownloaded,
+} from "@/lib/player/playback-clock";
+import {
+  awaitCastServerReady,
+  isBundledEngineUrl,
+  isLocalEngineUrl,
+  restartCastServer,
+} from "@/lib/stremio-server";
+import { playbackStartupProfile } from "@/lib/player/startup-profile";
+import { isWeb } from "@/lib/platform";
+import { usePauseOnInactive } from "./player/hooks/use-pause-on-inactive";
+import { spoilerMaskFor } from "@/lib/spoilers";
+import { usePlayerWatched } from "./player/hooks/use-player-watched";
+import { useRoomSync } from "./player/hooks/use-room-sync";
+import { useHostSource } from "./player/hooks/use-host-source";
+import { useLobbyGate } from "./player/hooks/use-lobby-gate";
+import { hostSourceMatchesMedia } from "@/lib/together/room-derive";
+import { useLiveChannelOverlay } from "./player/hooks/use-live-channel-overlay";
+import { useStreamSwitcher } from "./player/hooks/use-stream-switcher";
+import { useMpvEmbed } from "./player/hooks/use-mpv-embed";
+import { usePlayerBridge } from "./player/hooks/use-player-bridge";
+import { useTextSync } from "./player/hooks/use-text-sync";
+import { useT } from "@/lib/i18n";
+import { useEpisodeNavigation } from "./player/hooks/use-episode-navigation";
+import { useAbLoop } from "./player/hooks/use-ab-loop";
+import { useAutoNextEpisode } from "./player/hooks/use-auto-next-episode";
+import { useStillWatching } from "./player/hooks/use-still-watching";
+import { useStartedNearEnd } from "./player/hooks/use-started-near-end";
+import { useFrameGrab } from "./player/hooks/use-frame-grab";
+import { useClipRecorder } from "./player/hooks/use-clip-recorder";
+import { useGifRecorder } from "./player/hooks/use-gif-recorder";
+import { HomeServerQualityControl } from "./player/home-server-quality-control";
+import { useSleepTimer } from "./player/hooks/use-sleep-timer";
+import { useAutoEndExit } from "./player/hooks/use-auto-end-exit";
+import { useQueueAdvance } from "./player/hooks/use-queue-advance";
+import { useQueueNav } from "./player/hooks/use-queue-nav";
+import { usePipMode } from "./player/hooks/use-pip-mode";
+import { usePlaybackControls } from "./player/hooks/use-playback-controls";
+import { useRemotePlaybackBinding } from "@/lib/remote/use-remote-playback-binding";
+import { usePlaybackPresence } from "./player/hooks/use-playback-presence";
+import { usePlayerExit } from "./player/hooks/use-player-exit";
+import { usePendingSeekApply } from "./player/hooks/use-pending-seek-apply";
+import { usePlayerHotkeys } from "./player/hooks/use-player-hotkeys";
+import { clearMediaControls, updateMediaControls } from "@/lib/media-session";
+import { usePlayerMedia } from "./player/hooks/use-player-media";
+import { useTrickplay } from "./player/hooks/use-trickplay";
+import { useStreamPill } from "./player/hooks/use-stream-pill";
+import { useStubDetection } from "./player/hooks/use-stub-detection";
+import { useBridgeLoad } from "./player/hooks/use-bridge-load";
+import { useSportsDockSurface } from "./player/hooks/use-sports-dock-surface";
+import { useVideoFill } from "./player/hooks/use-video-fill";
+import { useLivePictureEq } from "./player/hooks/use-live-picture-eq";
+import { useAnime4k } from "./player/hooks/use-anime4k";
+import { useHdrStage } from "./player/hooks/use-hdr-stage";
+import { useSdrBoostGate } from "./player/hooks/use-sdr-boost-gate";
+import { PlayerOverlayLayers, type PlayerOverlayLayersProps } from "./player/player-overlay-layers";
+import { StillWatchingPrompt } from "./player/still-watching-prompt";
+import { SourceErrorCard } from "./player/source-error-card";
+import { LeaveConfirmModal } from "@/components/player/leave-confirm-modal";
+import { HdrStageBridge } from "./player/hdr-stage-bridge";
+import { setSkipSegmentsView } from "@/lib/skip-intro/segment-store";
+import { markStreamDead, STUB_TTL_MS } from "@/lib/dead-streams";
+import type { VolumeIndicatorState } from "@/components/player/volume-indicator";
+import type { ToastInfo } from "@/views/addons/addons-types";
+import { SFX } from "@/lib/sfx";
+import { useKeyboardNavigation } from "@/lib/keyboard-navigation";
+import { clearOverlayDismiss, dismissedJustNow } from "@/lib/player/overlay-dismiss";
+import { subtitleStreamKey } from "@/lib/subtitles/subtitle-memory";
+import { SUBTITLE_FPS_TRANSITION_FAILED_EVENT } from "@/lib/player/subtitle-fps";
+import { PlayerInteractionLockControls } from "@/components/player/player-interaction-lock";
+import { usePlayerInteractionLock } from "./player/hooks/use-player-interaction-lock";
+import { isNextAired } from "@/lib/cw-resurface";
+import { exitAnyFullscreen } from "@/lib/fullscreen-state";
+
+let hdrFallbackNoticeShown = false;
+
+export function PlayerView({ src }: { src: PlayerSrc }) {
+  return src.officialBroadcast ? (
+    <EmbeddedBroadcastPlayer src={src} stream={src.officialBroadcast} />
+  ) : (
+    <NativePlayerView src={src} />
+  );
+}
+
+function NativePlayerView({ src }: { src: PlayerSrc }) {
+  const {
+    setChromeHidden: setAppChromeHidden,
+    topPath,
+    openPicker,
+    exitPlayback,
+    replacePlayerSrc,
+    exitPlayer,
+    setPipDocked,
+    picker,
+  } = useView();
+  const docked = !!src.sportsDocked;
+  const [dockMinimized, setDockMinimized] = useState(false);
+  const setChromeHidden = useCallback(
+    (hidden: boolean) => setAppChromeHidden(docked || src.pipDocked ? false : hidden),
+    [docked, src.pipDocked, setAppChromeHidden],
+  );
+  useEffect(() => {
+    setAppChromeHidden(false);
+    window.dispatchEvent(new Event("resize"));
+    window.dispatchEvent(new Event("compass:mpv-refresh-geom"));
+  }, [docked, src.pipDocked, setAppChromeHidden]);
+  const { settings, update } = useSettings();
+  const bigPictureActive = useBigPicture().active;
+  const isKid = useActiveKid() != null;
+  const t = useT();
+  const chromeTheme = resolveChromeTheme(settings.theme, settings.playerChromeTheme);
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!settings.playerMenuBlack) {
+      delete root.dataset.playerBlack;
+      return;
+    }
+    root.dataset.playerBlack = "on";
+    return () => {
+      delete root.dataset.playerBlack;
+    };
+  }, [settings.playerMenuBlack]);
+  const { avatarsCorner, chatCorner, episodesCorner, avatarsHidden, chatHidden, episodesHidden } =
+    useChromeConfig(chromeTheme);
+  const { authKey } = useAuth();
+  const debrids = useDebridClients();
+  const {
+    snapshot: roomSnapshot,
+    publishState,
+    sendCommand,
+    onIncomingCommand,
+    suppressOutgoingFor,
+    onIncomingState,
+    clientId,
+    markReady,
+    notifyHostLeaving,
+    clearInvite,
+    sendInvite,
+    claimHost,
+    chat,
+    sendChat,
+    sendDraw,
+    onIncomingDraw,
+    presenceMap,
+    participantLocations,
+    startRoom,
+    hostSource,
+  } = useTogether();
+  const stageRef = useRef<HTMLDivElement>(null);
+  const refreshDockGeometry = useCallback(() => window.dispatchEvent(new Event("compass:mpv-refresh-geom")), []);
+  const videoMountRef = useRef<HTMLDivElement>(null);
+  const bridgeRef = useRef<PlayerBridge | null>(null);
+  const selfFrameReadyRef = useRef(false);
+  const { fullscreen, toggleFullscreen } = useFullscreen();
+  const { snap, engine, bridgeReady, bridgeKey, embedActive, svpActive } = usePlayerBridge({
+    bridgeRef,
+    videoMountRef,
+    src,
+    settings,
+  });
+  const nativeDock = docked && engine === "mpv" && embedActive;
+  const prepareDockMove = useCallback((next: DockSpot, commit: () => void) => {
+    if (!nativeDock) return false;
+    const stage = stageRef.current?.getBoundingClientRect();
+    const rect = readEmbedRect(videoMountRef.current);
+    if (!stage || !rect) return false;
+    return bridgeRef.current?.moveEmbeddedSurface?.({
+      ...rect,
+      cssLeft: rect.cssLeft + next.x - stage.left,
+      cssTop: rect.cssTop + next.y - stage.top,
+    }, commit) ?? false;
+  }, [nativeDock]);
+  const dockDrag = useDockDrag(stageRef, docked, refreshDockGeometry, prepareDockMove);
+  useSportsDockSurface(nativeDock && !src.pipDocked, videoMountRef);
+  const isP2pEngine =
+    (isBundledEngineUrl(src.url) || isLocalEngineUrl(src.url)) &&
+    !src.url.includes("/hlsv2/") &&
+    !!src.streamRef?.infoHash;
+  const isLocalSrc = isLocalUrl(src.url);
+  const { stats: engineStats, genuineFailure } = useEngineStats({
+    url: src.url,
+    infoHash: src.streamRef?.infoHash ?? null,
+    fileIdx: src.streamRef?.fileIdx ?? null,
+    active: snap.status !== "ended" && (snap.videoWidth <= 0 || isP2pEngine),
+  });
+  useEffect(() => {
+    const isLive = src.isLive || !!src.meta.id?.startsWith("iptv:");
+    const isHls = src.url.includes("/hlsv2/");
+    if (isP2pEngine) {
+      setPlaybackDownloaded(
+        resolvePlaybackDownloadedFraction({
+          isP2pEngine,
+          streamProgress: engineStats?.streamProgress ?? 0,
+          streamLen: engineStats?.streamLen ?? 0,
+        }),
+      );
+    } else if (isLocalSrc) {
+      setPlaybackDownloaded(1);
+    } else if (!isLive && !isHls) {
+      const dur = snap.durationSec || 0;
+      setPlaybackDownloaded(dur > 0 ? Math.min(1, (snap.positionSec + snap.bufferedSec) / dur) : 0);
+    } else {
+      setPlaybackDownloaded(0);
+    }
+  }, [
+    engineStats?.streamProgress,
+    engineStats?.streamLen,
+    src.url,
+    isP2pEngine,
+    isLocalSrc,
+    src.isLive,
+    src.meta.id,
+    snap.positionSec,
+    snap.bufferedSec,
+    snap.durationSec,
+  ]);
+  const shellSnapRef = useRef(snap);
+  const snapRef = useRef(snap);
+  snapRef.current = snap;
+  const [foreignNotice, setForeignNotice] = useState<{ title: string | null; from: string } | null>(
+    null,
+  );
+  const [hasStarted, setHasStarted] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  // Detached PiP keeps this view mounted so the session survives, and only yields the
+  // page underneath, the way a docked sports broadcast already does.
+  const { pipMode, togglePipMode, exitPip } = usePipMode({
+    bridgeRef,
+    setChromeHidden,
+    onDetach: () => setPipDocked(true),
+    onReattach: () => setPipDocked(false),
+  });
+  const { slowLoad, transcodedUrl, sourceError, clearSourceError } = useAutoRetry({
+    bridgeRef,
+    src,
+    snap,
+    stremioServerTranscode: settings.stremioServerTranscode,
+    instantPlay: settings.instantPlay,
+    inRoom: roomSnapshot.state === "joined",
+    debrids,
+    selfFrameReadyRef,
+    openPicker,
+    engineFailure: genuineFailure,
+    isP2pEngine,
+    engineStats,
+  });
+
+  useWakeReconnect({ bridgeRef, src, snap });
+
+  useEffect(() => {
+    if (roomSnapshot.state !== "joined") return;
+    const id = window.setInterval(() => setNow(Date.now()), 6000);
+    return () => window.clearInterval(id);
+  }, [roomSnapshot.state]);
+
+  const season = src.episode?.season;
+  const episode = src.episode?.episode;
+  const inRoom = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;
+  const isHost = inRoom && roomSnapshot.hostClientId === clientId;
+  const canControl = !inRoom || hasStarted;
+  const guestPickRef = useRef(settings.togetherGuestsPick);
+  guestPickRef.current = settings.togetherGuestsPick;
+
+  usePauseOnInactive({ bridgeRef, snapRef });
+
+  const showWaiting = inRoom && !hasStarted;
+  const selfName = useMemo(
+    () => roomSnapshot.participants.find((p) => p.id === clientId)?.name ?? "You",
+    [roomSnapshot.participants, clientId],
+  );
+  const selfColor = settings.compassColor || nameColor(selfName);
+  const playing = snap.status === "playing";
+
+  const {
+    drawMode,
+    setDrawMode,
+    hideOthersDrawings,
+    setHideOthersDrawings,
+    strokes,
+    onDrawStart,
+    onDrawPoint,
+    onDrawEnd,
+    clearStrokes,
+  } = useDrawMode({
+    inRoom,
+    participantCount: roomSnapshot.participants.length,
+    clientId,
+    topPath,
+    onIncomingDraw,
+    sendDraw,
+  });
+
+  const { chromeVisible, wakeChrome, hideForResume, setAnyMenuOpen, cursorStyle } =
+    useChromeVisibility({
+      playing,
+      drawMode,
+      pipMode,
+      setChromeHidden,
+      keyboardPauseShowsControls: settings.keyboardPauseShowsControls,
+    });
+  const {
+    enabled: screenLockEnabled,
+    locked: screenLocked,
+    controlsVisible: screenLockControlsVisible,
+    binding: screenLockBinding,
+    lock: lockScreen,
+    unlock: unlockScreen,
+    wakeControls: wakeScreenLockControls,
+  } = usePlayerInteractionLock();
+
+  const { adjacent, swappingEp, goToEpisode } = useEpisodeNavigation({
+    src,
+    settings,
+    debrids,
+    authKey,
+    inRoom,
+    isHost,
+    sendInvite,
+    claimHost,
+    replacePlayerSrc,
+    openPicker,
+  });
+
+  const airedNext =
+    adjacent.next && isNextAired(false, adjacent.next.airDate) ? adjacent.next : null;
+  const canChangeEpisode =
+    (src.meta.type === "series" || adjacent.next != null || adjacent.prev != null) &&
+    (!inRoom || isHost);
+  const roomGuest = inRoom && !isHost;
+  const broadcastEpisode = useCallback(
+    (ep: PlayEpisode) => {
+      if (!inRoom || !isHost) return;
+      claimHost(true);
+      sendInvite(buildPlayInvite(src.meta, ep));
+    },
+    [inRoom, isHost, claimHost, sendInvite, src.meta],
+  );
+
+  const [autoNextCancelled, setAutoNextCancelled] = useState(false);
+  useEffect(() => {
+    setAutoNextCancelled(false);
+  }, [src.url]);
+
+  const startedNearEndRef = useStartedNearEnd(src.url, snap.status, snap.durationSec);
+
+  const queue = useQueue();
+  const sleepAtEndArmed = useSleepAtEnd();
+  const queueOwnsCurrent = queueIndexOf(src.meta, src.episode) >= 0;
+
+  useEffect(() => {
+    setQueuePlaying(src.meta, src.episode ?? undefined);
+    return () => setQueuePlaying(null);
+  }, [src.meta, src.episode]);
+  const queueOrSleepArmed = queueOwnsCurrent || sleepAtEndArmed;
+
+  const closePlayerRef = useRef<() => void>(() => {});
+  const {
+    prompt: stillPrompt,
+    gateAdvance,
+    continueWatching,
+    stopWatching,
+  } = useStillWatching({
+    enabled: settings.stillWatching,
+    threshold: settings.stillWatchingAfter,
+    onContinue: goToEpisode,
+    onStop: () => closePlayerRef.current(),
+  });
+  const autoAdvance = useCallback(
+    (ep: PlayEpisode | null) => {
+      if (ep && gateAdvance(ep)) return;
+      goToEpisode(ep);
+    },
+    [gateAdvance, goToEpisode],
+  );
+
+  useAutoNextEpisode({
+    src,
+    snap,
+    nextEp: settings.autoPlayNextEpisode && !queueOrSleepArmed ? airedNext : null,
+    canChangeEpisode,
+    cancelled: autoNextCancelled,
+    startedNearEndRef,
+    goToEpisode: autoAdvance,
+  });
+
+  const quickToolsEnabled = !inRoom || isHost;
+  const ab = useAbLoop({
+    bridgeRef,
+    durationSec: snap.durationSec,
+    enabled: quickToolsEnabled,
+    resetKey: src.url,
+  });
+  const sleep = useSleepTimer({
+    bridgeRef,
+    status: snap.status,
+    durationSec: snap.durationSec,
+    srcUrl: src.url,
+  });
+  const frameGrab = useFrameGrab({
+    bridgeRef,
+    src,
+  });
+  const gif = useGifRecorder({ src });
+  const clip = useClipRecorder({ src });
+  const svpToast = useSvpGuard(settings.playerSvp && !!settings.svpVpyPath);
+
+  const {
+    streamCheckOpen,
+    setStreamCheckOpen,
+    switcherOpen,
+    setSwitcherOpen,
+    swapResolvingKey,
+    liveUrl,
+    liveHistoryUrl,
+    liveStreamRef,
+    pickAnother,
+    onSwitchStream,
+  } = useStreamSwitcher({
+    bridgeRef,
+    src,
+    snap,
+    debrids,
+  });
+  const activeMediaSrc = useMemo(
+    () =>
+      liveUrl === src.url && liveStreamRef === src.streamRef
+        ? src
+        : { ...src, url: liveUrl, historyUrl: liveHistoryUrl, streamRef: liveStreamRef },
+    [src, liveUrl, liveHistoryUrl, liveStreamRef],
+  );
+  const castSource = useMemo(
+    () =>
+      liveUrl === src.url && transcodedUrl
+        ? { ...activeMediaSrc, url: transcodedUrl }
+        : activeMediaSrc,
+    [activeMediaSrc, liveUrl, src.url, transcodedUrl],
+  );
+  const cast = usePlayerCast({ src: castSource, debrids, snapRef, bridgeRef, settings });
+  const {
+    resolvedImdbId,
+    subAssNative,
+    captureExitSnapshot,
+    download,
+    subDropToast,
+    suspendAutoSyncForManualTiming,
+  } = usePlayerMedia({
+    src: activeMediaSrc,
+    snap,
+    engine,
+    settings,
+    authKey,
+    bridgeRef,
+    bridgeReady,
+    bridgeKey,
+    svpActive,
+    videoMountRef,
+    toggleFullscreen,
+    castActiveRef: cast.castActiveRef,
+    season,
+    episode,
+  });
+
+  const contentAdvisory = useContentAdvisory(
+    settings.contentAdvisoryToast,
+    resolvedImdbId,
+    src.url,
+    playing,
+  );
+  const { hostSourceRef } = useHostSource({
+    inRoom,
+    isHost,
+    hasStarted,
+    src,
+    liveUrl,
+    liveStreamRef,
+    snap,
+    guestPickRef,
+    publishState,
+  });
+  const guestHostSource =
+    inRoom && !isHost && hostSourceMatchesMedia(hostSource, src.meta.id, src.episode ?? null)
+      ? hostSource!.descriptor
+      : null;
+  const liveOverlay = useLiveChannelOverlay({
+    src,
+    replacePlayerSrc,
+  });
+  const isLiveLike = liveOverlay.isLive || isLivePlaybackSrc(src);
+  const { hasNextEpisodeNow, hasPrevEpisodeNow, playNext, playPrev, playNextRef, playPrevRef } =
+    useQueueNav({
+      src,
+      adjacent,
+      canChangeEpisode,
+      isLiveLike,
+      queueDrivesNav: settings.queueDrivesNav,
+      goToEpisode,
+      openPicker,
+    });
+
+  usePlaybackPresence({ src, snap, season, episode, liveGuideOpen: liveOverlay.open });
+  useCastReturnPublish({
+    casting: !!cast.castDevice,
+    inRoom,
+    isHost,
+    src,
+    snapRef,
+    hostSourceRef,
+    guestPickRef,
+    publishState,
+  });
+
+  const { closePlayer, onStubEject } = usePlayerExit({
+    src: activeMediaSrc,
+    season,
+    episode,
+    bridgeRef,
+    liveUrl,
+    liveStreamRef,
+    inRoom,
+    isHost,
+    instantPlay: settings.instantPlay,
+    captureExitSnapshot,
+    exitPip,
+    castActiveRef: cast.castActiveRef,
+    stopCast: cast.stopCast,
+    publishState,
+    notifyHostLeaving,
+    clearInvite,
+    exitPlayback,
+    openPicker,
+  });
+  closePlayerRef.current = () => void closePlayer();
+  const backFromPlayer = useCallback(async () => {
+    if (src.sportsDocked === false) {
+      // Keep the mounted playback engine and current source; only change its surface.
+      setDockMinimized(false);
+      replacePlayerSrc({ ...src, sportsDocked: true });
+      await exitAnyFullscreen();
+      return;
+    }
+    await closePlayer();
+  }, [src, replacePlayerSrc, closePlayer]);
+  useEffect(() => {
+    const onLocalBack = (e: Event) => {
+      e.preventDefault();
+      void backFromPlayer();
+    };
+    window.addEventListener("compass:local-back", onLocalBack);
+    return () => window.removeEventListener("compass:local-back", onLocalBack);
+  }, [backFromPlayer]);
+
+  useKeyboardNavigation({
+    // TV focus navigation intentionally owns arrows and Space while enabled.
+    // Keep it opt-in so standard player hotkeys remain the default.
+    enabled: settings.tvNavigation && settings.playerTvNavigation && !screenLocked && !src.pipDocked,
+    wrap: true,
+    arrows: chromeVisible && !pipMode,
+    onBack: () => {
+      void backFromPlayer();
+      return true;
+    },
+  });
+
+  const autoAdvancedRef = useRef(false);
+  const playbackStartedRef = useRef(false);
+  useEffect(() => {
+    autoAdvancedRef.current = false;
+    playbackStartedRef.current = false;
+  }, [src.url]);
+  if (
+    hasPlaybackStartedForStallCheck({
+      status: snap.status,
+      positionSec: getPlaybackPosition(),
+      videoWidth: snap.videoWidth,
+      videoHeight: snap.videoHeight,
+    })
+  ) {
+    playbackStartedRef.current = true;
+  }
+  useEffect(() => {
+    if (snap.status !== "error" || autoAdvancedRef.current) return;
+    if (!src.autoFired || playbackStartedRef.current || src.isLive || inRoom) return;
+    autoAdvancedRef.current = true;
+    if (src.streamRef) markStreamDead(src.streamRef, "load-failed", STUB_TTL_MS);
+    exitPlayback();
+    openPicker(src.meta, src.episode, {
+      autoPlay: true,
+      attempt: (src.attempt ?? 0) + 1,
+      resume: src.resume,
+    });
+  }, [snap.status, src, inRoom, exitPlayback, openPicker]);
+
+  // Opt-in: advance to the next stream if this pick hasn't started playing within
+  // 10s (dead addon / stalled source). First-load only — a hard error is already
+  // handled above, and mid-playback buffering is left untouched.
+  const stallSrcRef = useRef(src);
+  stallSrcRef.current = src;
+  useEffect(() => {
+    if (!settings.autoNextStreamOnStall || !src.autoFired || src.isLive || inRoom) return;
+    const timer = window.setTimeout(() => {
+      const currentSnap = snapRef.current;
+      if (
+        autoAdvancedRef.current ||
+        playbackStartedRef.current ||
+        hasPlaybackStartedForStallCheck({
+          status: currentSnap.status,
+          positionSec: getPlaybackPosition(),
+          videoWidth: currentSnap.videoWidth,
+          videoHeight: currentSnap.videoHeight,
+        })
+      ) {
+        return;
+      }
+      const s = stallSrcRef.current;
+      autoAdvancedRef.current = true;
+      if (s.streamRef) markStreamDead(s.streamRef, "load-failed", STUB_TTL_MS);
+      exitPlayback();
+      openPicker(s.meta, s.episode, {
+        autoPlay: true,
+        attempt: (s.attempt ?? 0) + 1,
+        resume: s.resume,
+      });
+    }, stallWaitMs(settings.autoNextStreamOnStallSec));
+    return () => window.clearTimeout(timer);
+  }, [
+    src.url,
+    src.isLive,
+    src.autoFired,
+    settings.autoNextStreamOnStall,
+    settings.autoNextStreamOnStallSec,
+    inRoom,
+    exitPlayback,
+    openPicker,
+  ]);
+
+  const [dvrOpen, setDvrOpen] = useState(false);
+  const pickAnotherOrGuide = useCallback(() => {
+    if (liveOverlay.isLive) {
+      liveOverlay.setOpen(true);
+    } else {
+      pickAnother();
+    }
+  }, [liveOverlay, pickAnother]);
+
+  const [episodePanelOpen, setEpisodePanelOpen] = useState(false);
+  const { watchedFor } = usePlayerWatched({
+    meta: src.meta,
+    authKey,
+    imdbId: resolvedImdbId,
+    enabled: !!src.episode && (episodePanelOpen || !!adjacent.next),
+  });
+  const nextEpMask = spoilerMaskFor(settings, {
+    watched: adjacent.next ? watchedFor(adjacent.next) : true,
+    isNextUp: true,
+  });
+  const isSeriesPlayback = !!src.episode && src.meta.type === "series";
+  const showEpisodePanel =
+    isSeriesPlayback || (settings.queueDrivesNav && queue.length > 0 && !isLiveLike);
+
+  const showHeaderWarning =
+    src.notWebReady === true &&
+    engine === "html5" &&
+    (snap.status === "error" || snap.status === "loading");
+  const [noAudioDismissed, setNoAudioDismissed] = useState(false);
+  useEffect(() => {
+    setNoAudioDismissed(false);
+  }, [src.url]);
+  const showNoAudioWarning =
+    engine === "html5" &&
+    snap.noAudio === true &&
+    !noAudioDismissed &&
+    !liveOverlay.isLive &&
+    settings.playerEngine !== "auto";
+
+  const { inRoomRef, isHostRef, initialSyncDoneRef } = useRoomSync({
+    inRoom,
+    isHost,
+    hasStarted,
+    setHasStarted,
+    selfFrameReadyRef,
+    roomSnapshot,
+    clientId,
+    src,
+    snap,
+    bridgeRef,
+    hostSourceRef,
+    guestPickRef,
+    publishState,
+    onIncomingState,
+    onIncomingCommand,
+    markReady,
+    suppressOutgoingFor,
+    setForeignNotice,
+    cast: cast.sync,
+  });
+
+  const lobby = useLobbyGate({
+    inRoom,
+    isHost,
+    hasStarted,
+    setHasStarted,
+    roomSnapshot,
+    startRoom,
+    suppressOutgoingFor,
+    bridgeRef,
+    initialSyncDoneRef,
+    mediaKey: `${src.meta.id}|${src.episode?.season ?? ""}|${src.episode?.episode ?? ""}`,
+  });
+
+  const { rememberSubChoice, cycleSubtitles, playPauseToggle, seekStep, seekTo } =
+    usePlaybackControls({
+      bridgeRef,
+      snapRef,
+      metaId: src.meta.id,
+      mediaKey: `${src.meta.id}|${src.episode?.season ?? ""}|${src.episode?.episode ?? ""}`,
+      subtitleStreamKey: subtitleStreamKey(activeMediaSrc.streamRef),
+      inRoom,
+      isHost,
+      hasStarted,
+      canControl,
+      castDevice: cast.castDevice,
+      startHost: lobby.startHost,
+      togglePlayCast: cast.togglePlayCast,
+      seekCast: cast.seekCast,
+      sendCommand,
+    });
+
+  const textSync = useTextSync(bridgeRef.current, src.meta.id, rememberSubChoice);
+  const [syncToast, setSyncToast] = useState<ToastInfo | null>(null);
+  const syncToastTimerRef = useRef<number | null>(null);
+  const showSyncToast = useCallback((kind: "ok" | "error", text: string) => {
+    if (syncToastTimerRef.current != null) window.clearTimeout(syncToastTimerRef.current);
+    setSyncToast({ kind, text });
+    syncToastTimerRef.current = window.setTimeout(
+      () => setSyncToast(null),
+      kind === "error" ? 5000 : 3000,
+    );
+  }, []);
+  useEffect(() => {
+    const onSubtitleFpsTransitionFailed = () => {
+      showSyncToast("error", t("Couldn't switch subtitles. Try again."));
+    };
+    window.addEventListener(SUBTITLE_FPS_TRANSITION_FAILED_EVENT, onSubtitleFpsTransitionFailed);
+    return () => {
+      window.removeEventListener(
+        SUBTITLE_FPS_TRANSITION_FAILED_EVENT,
+        onSubtitleFpsTransitionFailed,
+      );
+    };
+  }, [showSyncToast, t]);
+  const handleEnterSync = useCallback(() => {
+    suspendAutoSyncForManualTiming();
+    void textSync.enter(src.url, src.headers);
+  }, [textSync.enter, src.url, src.headers, suspendAutoSyncForManualTiming]);
+
+  const volumeIndicatorTimerRef = useRef<number | null>(null);
+  const [volumeIndicator, setVolumeIndicator] = useState<VolumeIndicatorState>({
+    visible: false,
+    volume: snap.volume,
+    muted: snap.muted,
+  });
+  const volumeHudEnabled = settings.playerVolumeHud;
+  const showVolumeFeedback = useCallback(
+    (volume: number, muted: boolean) => {
+      if (!volumeHudEnabled) return;
+      if (volumeIndicatorTimerRef.current != null) {
+        window.clearTimeout(volumeIndicatorTimerRef.current);
+      }
+      setVolumeIndicator({ visible: true, volume, muted });
+      volumeIndicatorTimerRef.current = window.setTimeout(() => {
+        setVolumeIndicator((current) => ({ ...current, visible: false }));
+        volumeIndicatorTimerRef.current = null;
+      }, 1200);
+    },
+    [volumeHudEnabled],
+  );
+  useEffect(() => {
+    return () => {
+      if (volumeIndicatorTimerRef.current != null) {
+        window.clearTimeout(volumeIndicatorTimerRef.current);
+      }
+    };
+  }, []);
+
+  const videoFill = useVideoFill(bridgeRef, src.url, playing);
+  useLivePictureEq(bridgeRef, src.url);
+  const anime4k = useAnime4k(bridgeRef, src.url, src, snap.videoWidth, bridgeReady);
+  const [mouseHoldSpeedActive, setMouseHoldSpeedActive] = useState(false);
+  const mouseHoldRef = useRef<{
+    pointerId: number | null;
+    timer: number | null;
+    engaged: boolean;
+    baseRate: number;
+  }>({ pointerId: null, timer: null, engaged: false, baseRate: 1 });
+  const suppressMouseClickRef = useRef(false);
+  const suppressMouseClickTimerRef = useRef<number | null>(null);
+
+  const releaseMouseHoldSpeed = useCallback(
+    (suppressClick: boolean) => {
+      const hold = mouseHoldRef.current;
+      if (hold.pointerId == null) return;
+      if (hold.timer != null) {
+        window.clearTimeout(hold.timer);
+        hold.timer = null;
+      }
+      const wasEngaged = hold.engaged;
+      hold.pointerId = null;
+      hold.engaged = false;
+      if (!wasEngaged) return;
+
+      bridgeRef.current?.setRate(hold.baseRate);
+      setMouseHoldSpeedActive(false);
+      if (!suppressClick) return;
+
+      suppressMouseClickRef.current = true;
+      if (suppressMouseClickTimerRef.current != null) {
+        window.clearTimeout(suppressMouseClickTimerRef.current);
+      }
+      suppressMouseClickTimerRef.current = window.setTimeout(() => {
+        suppressMouseClickRef.current = false;
+        suppressMouseClickTimerRef.current = null;
+      }, 0);
+    },
+    [bridgeRef],
+  );
+
+  useEffect(() => {
+    return () => {
+      const hold = mouseHoldRef.current;
+      if (hold.timer != null) window.clearTimeout(hold.timer);
+      if (hold.engaged) {
+        bridgeRef.current?.setRate(hold.baseRate);
+        setMouseHoldSpeedActive(false);
+      }
+      hold.pointerId = null;
+      hold.timer = null;
+      hold.engaged = false;
+      suppressMouseClickRef.current = false;
+      if (suppressMouseClickTimerRef.current != null) {
+        window.clearTimeout(suppressMouseClickTimerRef.current);
+      }
+    };
+  }, [bridgeRef, src.url]);
+
+  useEffect(() => {
+    const clear = (e: PointerEvent) => {
+      const hold = mouseHoldRef.current;
+      if (hold.pointerId == null || hold.pointerId !== e.pointerId) return;
+      if (hold.timer != null) {
+        window.clearTimeout(hold.timer);
+        hold.timer = null;
+      }
+      if (hold.engaged) {
+        bridgeRef.current?.setRate(hold.baseRate);
+        setMouseHoldSpeedActive(false);
+      }
+      hold.pointerId = null;
+      hold.engaged = false;
+    };
+    window.addEventListener("pointerup", clear);
+    window.addEventListener("pointercancel", clear);
+    return () => {
+      window.removeEventListener("pointerup", clear);
+      window.removeEventListener("pointercancel", clear);
+    };
+  }, [bridgeRef]);
+
+  const reloadBusyRef = useRef(false);
+  const reloadSource = useCallback(() => {
+    const b = bridgeRef.current;
+    if (!b || reloadBusyRef.current) return;
+    const swapped = liveUrl !== src.url;
+    const url = swapped ? liveUrl : (transcodedUrl ?? src.url);
+    if (!url) return;
+    reloadBusyRef.current = true;
+    const wasPlaying = snapRef.current.status === "playing";
+    const resumeAt = isLiveLike ? 0 : Math.max(0, getPlaybackPosition());
+    showSyncToast("ok", t("Reloading the stream…"));
+    void b
+      .load({
+        url,
+        startupProfile: playbackStartupProfile(liveStreamRef ?? src.streamRef),
+        subtitles: src.subtitles,
+        notWebReady: src.notWebReady,
+        isLive: isLiveLike,
+        headers: swapped ? undefined : src.headers,
+        startAtSec: resumeAt > 5 ? resumeAt : undefined,
+      })
+      .then(() => {
+        if (wasPlaying) return b.play().catch(() => {});
+      })
+      .catch(() => {
+        showSyncToast("error", t("Couldn't reload the stream. Try picking another source."));
+      })
+      .finally(() => {
+        reloadBusyRef.current = false;
+      });
+  }, [
+    bridgeRef,
+    isLiveLike,
+    liveStreamRef,
+    liveUrl,
+    showSyncToast,
+    src.headers,
+    src.notWebReady,
+    src.streamRef,
+    src.subtitles,
+    src.url,
+    t,
+    transcodedUrl,
+  ]);
+
+  const serverRestartBusyRef = useRef(false);
+  const restartStreamServer = useCallback(() => {
+    if (serverRestartBusyRef.current) return;
+    if (isWeb()) {
+      showSyncToast("error", t("Compass's streaming server only runs in the desktop app."));
+      return;
+    }
+    serverRestartBusyRef.current = true;
+    showSyncToast("ok", t("Restarting the streaming server…"));
+    void (async () => {
+      const failure = await restartCastServer();
+      if (failure) {
+        serverRestartBusyRef.current = false;
+        showSyncToast("error", t("Couldn't restart the streaming server."));
+        return;
+      }
+      const ready = await awaitCastServerReady(10_000);
+      serverRestartBusyRef.current = false;
+      if (!ready) {
+        showSyncToast("error", t("The streaming server didn't come back up."));
+        return;
+      }
+      const url = liveUrl !== src.url ? liveUrl : (transcodedUrl ?? src.url);
+      if (isBundledEngineUrl(url) || isLocalEngineUrl(url)) {
+        reloadSource();
+        return;
+      }
+      showSyncToast("ok", t("Streaming server restarted."));
+    })();
+  }, [liveUrl, reloadSource, showSyncToast, src.url, t, transcodedUrl]);
+
+  const { holdSpeedActive, showStats, subtitleOffsetSec } = usePlayerHotkeys({
+    bridgeRef,
+    snap,
+    metaId: src.meta.id,
+    svpActive,
+    drawMode,
+    setDrawMode,
+    closePlayer,
+    returnToPreview: src.sportsDocked === false ? backFromPlayer : undefined,
+    playPauseToggle,
+    seekStep,
+    seekTo,
+    toggleFullscreen,
+    togglePip: togglePipMode,
+    fullscreen,
+    cycleSubtitles,
+    playNext,
+    playPrev,
+    hasNextEpisode: hasNextEpisodeNow,
+    hasPrevEpisode: hasPrevEpisodeNow,
+    toggleSwitcher: () => setSwitcherOpen((v) => !v),
+    toggleEpisodePanel: () => setEpisodePanelOpen((v) => !v),
+    liveOverlay,
+    toggleDvr: () => setDvrOpen((v) => !v),
+    sleep,
+    quickToolsEnabled,
+    frameGrab,
+    onToggleAnime4k: () => {
+      if (!anime4k.available) {
+        showSyncToast("error", t("Anime4K isn't set up yet. Turn it on in Settings under Anime."));
+        return;
+      }
+      anime4k.setMode(anime4k.mode === "off" ? "auto" : "off");
+    },
+    onAnime4kOn: () => {
+      if (!anime4k.available) {
+        showSyncToast("error", t("Anime4K isn't set up yet. Turn it on in Settings under Anime."));
+        return;
+      }
+      anime4k.setMode("auto");
+    },
+    onAnime4kOff: () => {
+      anime4k.setMode("off");
+    },
+    onReloadSource: reloadSource,
+    onRestartServer: restartStreamServer,
+    gif,
+    clip,
+    videoFill,
+    onVolumeFeedback: showVolumeFeedback,
+  });
+
+  useEffect(() => {
+    if (snap.status === "idle" || snap.status === "ended" || snap.status === "error") {
+      clearMediaControls();
+      return;
+    }
+    const ep = src.episode;
+    const subtitle = ep ? `S${ep.season} E${ep.episode}${ep.name ? ` · ${ep.name}` : ""}` : "";
+    const artUrl = src.episode?.still || src.meta.background || src.meta.poster || null;
+    const vol = snap.muted ? 0 : snap.volume;
+    const isPlaying = snap.status === "playing" && (snap.firstFrameReady || snap.positionSec > 0.3);
+    const pos = getPlaybackPosition();
+    updateMediaControls(isPlaying, src.meta.name, subtitle, artUrl, snap.durationSec, pos, vol);
+
+    const unsub = subscribePlaybackClock(() => {
+      const livePos = getPlaybackPosition();
+      const currentSnap = snapRef.current;
+      if (currentSnap.status === "idle" || currentSnap.status === "ended" || currentSnap.status === "error") {
+        clearMediaControls();
+        return;
+      }
+      const playingNow =
+        currentSnap.status === "playing" && (currentSnap.firstFrameReady || livePos > 0.3);
+      updateMediaControls(
+        playingNow,
+        src.meta.name,
+        subtitle,
+        artUrl,
+        currentSnap.durationSec,
+        livePos,
+        vol,
+      );
+    });
+    return () => unsub();
+  }, [
+    snap.status,
+    snap.firstFrameReady,
+    src.meta.name,
+    src.episode,
+    src.meta.poster,
+    src.meta.background,
+    snap.durationSec,
+    snap.volume,
+    snap.muted,
+  ]);
+  useEffect(() => () => clearMediaControls(), []);
+
+  const onPrevEpisode = useCallback(() => playPrevRef.current(), [playPrevRef]);
+  const onNextEpisode = useCallback(() => playNextRef.current(), [playNextRef]);
+  useRemotePlaybackBinding({
+    bridgeRef,
+    bridgeReady,
+    snap,
+    src,
+    castDevice: cast.castDevice,
+    castPlaying: cast.castPlaying,
+    castPositionSec: cast.castPositionSec,
+    playCast: cast.playCast,
+    pauseCast: cast.pauseCast,
+    seekCast: cast.seekCast,
+    stopCast: cast.stopCast,
+    onPickDevice: cast.onPickDevice,
+    onPrevEpisode,
+    onNextEpisode,
+    hasPrevEpisode: hasPrevEpisodeNow,
+    hasNextEpisode: hasNextEpisodeNow,
+    onVolumeFeedback: showVolumeFeedback,
+  });
+
+  const { pendingResumeSec, acknowledgeResume, pendingSeekSec, clearPendingSeek, sourceKey, resumeReady } = useBridgeLoad({
+    bridgeRef,
+    inRoomRef,
+    isHostRef,
+    bridgeReady,
+    bridgeKey,
+    src,
+    transcodedUrl,
+    season,
+    episode,
+    authKey,
+  });
+
+  usePendingSeekApply({
+    pendingSeekSec,
+    sourceKey,
+    startPaused: src.startPaused,
+    clearPendingSeek,
+    durationSec: snap.durationSec,
+    bridgeRef,
+    inRoomRef,
+  });
+
+  useStubDetection({ src, snap, onStub: onStubEject, instantPlay: settings.instantPlay });
+
+  const reloadLive = useCallback(() => {
+    bridgeRef.current?.load({
+      url: src.url,
+      subtitles: src.subtitles,
+      notWebReady: src.notWebReady,
+      isLive: true,
+      headers: src.headers,
+    });
+  }, [src.url, src.subtitles, src.notWebReady, src.headers]);
+
+  useAutoEndExit({
+    src,
+    snap,
+    nextEp: airedNext,
+    canChangeEpisode,
+    roomGuest,
+    isLive: isLiveLike,
+    suspend: queueOrSleepArmed && !isLiveLike,
+    startedNearEndRef,
+    reloadLive,
+    closePlayer,
+  });
+
+  useQueueAdvance({
+    src,
+    snap,
+    queue,
+    isLive: isLiveLike,
+    startedNearEndRef,
+    openPicker,
+    exitPlayer,
+  });
+
+  const cancelToPicker = useCallback(() => {
+    if (isLocalSrc || src.meta.id?.startsWith("iptv:")) {
+      void closePlayer();
+      return;
+    }
+    bridgeRef.current?.destroy();
+    bridgeRef.current = null;
+    openPicker(src.meta, src.episode, { autoPlay: false });
+  }, [bridgeRef, closePlayer, isLocalSrc, openPicker, src.episode, src.meta]);
+  const { variant: streamPillVariant, dismiss: dismissStreamPill } = useStreamPill({
+    srcUrl: src.url,
+    snap,
+    pipMode,
+    showWaiting,
+    isLocalSrc,
+    slowLoad,
+    inRoom,
+    streamCheckOpen,
+  });
+
+  const playStreamRef = liveStreamRef ?? src.streamRef;
+  const playUrl = liveUrl ?? src.url;
+  useTrickplay({
+    url: playUrl,
+    enabled: settings.seekPreviewEnabled,
+    isLive: isLiveLike,
+  });
+  const adSegments = useAdSegments(
+    src.meta.id,
+    src.imdbId ?? null,
+    playStreamRef,
+    playUrl,
+    withinAdWindow(src.meta) || settings.adSkipEnabled,
+  );
+  const skipSegments = useSkipSegments(
+    src.meta,
+    src.episode,
+    snap.chapters,
+    snap.durationSec,
+    adSegments,
+  );
+  useEffect(() => {
+    setSkipSegmentsView(skipSegments);
+    return () => setSkipSegmentsView([]);
+  }, [skipSegments]);
+
+  useMpvEmbed({ engine, settings });
+
+  useSdrBoostGate({
+    engine,
+    hdrGamma: snap.hdrGamma,
+    enabled: settings.mpvTweaks?.["inverse-tone-mapping"] === "yes",
+  });
+
+  const { requested: hdrStageRequested, confirmed: hdrStageActive } = useHdrStage({
+    sourceKey: src.url,
+    engine,
+    embedActive,
+    hdrGamma: snap.hdrGamma,
+    playerHdrStage: docked ? "off" : settings.playerHdrStage,
+    playerHdrToSdr: settings.playerHdrToSdr,
+    onFallback: () => {
+      if (hdrFallbackNoticeShown) return;
+      hdrFallbackNoticeShown = true;
+      showSyncToast(
+        "error",
+        t("For reliable HDR on this display, switch to True HDR, separate window in Settings."),
+      );
+    },
+  });
+
+  const { mpvEmbedWindowsActive, stageBg } = embedFlags(
+    engine,
+    embedActive,
+    snap.videoWidth,
+    snap.videoHeight,
+  );
+  const { loaderActive } = useEverPlayed({
+    url: src.url,
+    status: snap.status,
+    durationSec: snap.durationSec,
+    swappingEp,
+    swapResolvingKey,
+  });
+  const [loaderShowing, setLoaderShowing] = useState(false);
+  // The desktop play-picker is a mouse surface, so while it is up the ten-foot
+  // chrome stands aside rather than layering a D-pad surface over something a
+  // remote cannot drive. PiP and draw are mouse modes for the same reason.
+  const tenFoot =
+    bigPictureActive &&
+    settings.bigPicturePlayerUi !== "desktop" &&
+    !picker &&
+    !pipMode &&
+    !drawMode;
+  // One lever. showChrome feeds the transport, the quick tools, the ad-report
+  // button, the X-ray overlay and the P2P chip, and none of them belong on a
+  // television. Big Picture renders its own.
+  const showChrome =
+    !screenLocked && !loaderActive && !loaderShowing && !tenFoot && (chromeVisible || drawMode);
+  const liveShellSnap =
+    cast.castDevice && !cast.audioRouting
+      ? { ...snap, status: (cast.castPlaying ? "playing" : "paused") as typeof snap.status }
+      : snap;
+  if (showChrome) shellSnapRef.current = liveShellSnap;
+  const shellSnap = showChrome ? liveShellSnap : shellSnapRef.current;
+  const volumeRef = useRef(snap.volume);
+  useEffect(() => {
+    volumeRef.current = snap.volume;
+  }, [snap.volume]);
+  const onVolumeWheel = useCallback(
+    (deltaY: number) => {
+      const dir = deltaY < 0 ? 1 : -1;
+      const boost = !isKid && bridgeRef.current?.capabilities().engine === "mpv";
+      const max = boost ? Math.max(1, Math.min(6, settings.volumeBoostMax || 2)) : 1;
+      const next = Math.min(max, Math.max(0, volumeRef.current + dir * 0.05));
+      volumeRef.current = next;
+      bridgeRef.current?.setVolume(next);
+      bridgeRef.current?.setMuted(false);
+      writePlayerVolume({ volume: next, muted: false });
+
+      if (settings.playerVolumeSfx) SFX.volumeChange(dir > 0);
+      showVolumeFeedback(next, false);
+    },
+    [showVolumeFeedback, isKid, settings.playerVolumeSfx, settings.volumeBoostMax],
+  );
+
+  const onLoaderRetry = useCallback(() => {
+    const b = bridgeRef.current;
+    if (b) {
+      void b.load({
+        url: src.url,
+        subtitles: src.subtitles,
+        notWebReady: src.notWebReady,
+        isLive: isLivePlaybackSrc(src),
+        headers: src.headers,
+      });
+    }
+  }, [src]);
+
+  const overlayProps: PlayerOverlayLayersProps = {
+    tenFoot,
+    snap,
+    engine,
+    src,
+    homeServerQualityControl: (
+      <HomeServerQualityControl
+        src={src}
+        positionMs={Math.max(0, snap.positionSec * 1000)}
+        playing={playing}
+        theme={resolveChromeTheme(settings.theme, settings.playerChromeTheme)}
+        replace={replacePlayerSrc}
+      />
+    ),
+    adStreamRef: playStreamRef,
+    adUrl: playUrl,
+    subShowInPip: settings.subShowInPip,
+    subAssNative,
+    showStats,
+    holdSpeedActive: holdSpeedActive || mouseHoldSpeedActive,
+    subtitleOffsetSec,
+    volumeIndicator,
+    volumeHudPosition: settings.playerVolumeHudPosition,
+    videoFillPill: videoFill.pill,
+    cropMode: videoFill.mode,
+    onCropMode: videoFill.setMode,
+    anime4kMode: anime4k.mode,
+    onAnime4kMode: anime4k.setMode,
+    anime4kAvailable: anime4k.available,
+    subDropToast: svpToast ?? subDropToast,
+    pipMode,
+    drawMode,
+    cast,
+    pickAnother,
+    pickAnotherOrGuide,
+    playPauseToggle,
+    toggleFullscreen,
+    onVolumeWheel,
+    onVolumeFeedback: showVolumeFeedback,
+    isLocalSrc,
+    swappingEp,
+    swapResolvingKey,
+    closePlayer,
+    onBack: backFromPlayer,
+    cancelToPicker,
+    engineStats,
+    isP2pEngine,
+    setLoaderShowing,
+    onLoaderRetry,
+    bridgeRef,
+    strokes,
+    hideOthersDrawings,
+    clientId,
+    selfName,
+    selfColor,
+    onDrawStart,
+    onDrawPoint,
+    onDrawEnd,
+    clearStrokes,
+    showWaiting,
+    pendingResumeSec,
+    pendingSeekSec,
+    skipSegments,
+    hasNextEpisode: hasNextEpisodeNow,
+    hasNextEpDisplay: canChangeEpisode && !autoNextCancelled && !!airedNext,
+    nextEp: canChangeEpisode && !autoNextCancelled ? airedNext : null,
+    nextEpMask,
+    pillsVisible: hasStarted || !inRoom,
+    allowAutoSkip: !roomGuest && resumeReady,
+    seekTo,
+    goToEpisode,
+    playNext,
+    playPrev,
+    hasPrevEpisodeNow,
+    setAutoNextCancelled,
+    showChrome,
+    ab,
+    frameGrabToast: frameGrab.toast,
+    onScreenshot: () => frameGrab.trigger(),
+    gif,
+    clip,
+    loaderActive,
+    sourceFailed: sourceError != null,
+    playerShellId: settings.playerShellId,
+    shellSnap,
+    snapRef,
+    fullscreen,
+    showDraw: inRoom && roomSnapshot.participants.length > 1 && !cast.castDevice,
+    metaId: src.meta.id,
+    setAnyMenuOpen,
+    onSeekStep: seekStep,
+    rememberSubChoice,
+    togglePipMode,
+    setDrawMode,
+    wakeChrome,
+    setHideOthersDrawings,
+    canPickAnother: !liveOverlay.isLive || !inRoom || isHost,
+    resolvedImdbId,
+    contentAdvisory,
+    tmdbKey: settings.tmdbKey ?? null,
+    download: isLocalSrc ? undefined : download,
+    liveOverlay,
+    setDvrOpen,
+    openDvr: liveOverlay.isLive ? () => setDvrOpen(true) : undefined,
+    sleep,
+    adjacentPrev: adjacent.prev,
+    adjacentNext: adjacent.next,
+    canChangeEpisode,
+    inRoom,
+    participants: roomSnapshot.participants,
+    hostClientId: roomSnapshot.hostClientId,
+    syncState: roomSnapshot.syncState,
+    avatarsVisible: chromeVisible || !playing,
+    presenceMap,
+    participantLocations,
+    now,
+    avatarsCorner,
+    avatarsHidden,
+    chat,
+    sendChat,
+    chromeVisible,
+    chatCorner,
+    chatHidden,
+    isHost,
+    staleIds: lobby.staleIds,
+    guestEscapeReady: lobby.guestEscapeReady,
+    onStart: lobby.startHost,
+    onPlayWithoutSync: lobby.playWithoutSync,
+    guestHostSource,
+    liveUrl,
+    currentInfoHash: playStreamRef?.infoHash ?? null,
+    currentFileIdx: playStreamRef?.fileIdx ?? null,
+    currentRef: playStreamRef ?? null,
+    switcherOpen,
+    foreignNotice,
+    onDismissForeign: () => setForeignNotice(null),
+    streamPillVariant,
+    mpvEmbedWindowsActive,
+    setStreamCheckOpen,
+    dismissStreamPill,
+    dvrOpen,
+    setSwitcherOpen,
+    onSwitchStream,
+    debridSlugs: debrids.map((d) => d.slug),
+    isSeriesPlayback: showEpisodePanel,
+    episodePanelOpen,
+    setEpisodePanelOpen,
+    upNextButtonVisible:
+      showEpisodePanel &&
+      chromeVisible &&
+      !episodePanelOpen &&
+      !switcherOpen &&
+      !pipMode &&
+      !drawMode &&
+      !episodesHidden &&
+      !roomGuest,
+    episodesCorner,
+    episodesHidden,
+    roomGuest,
+    onHostAdvance: broadcastEpisode,
+    watchedFor,
+    acknowledgeResume,
+    showHeaderWarning: showHeaderWarning && !streamPillVariant,
+    showNoAudioWarning,
+    onUseMpv: () => update({ playerEngine: "mpv" }),
+    onDismissNoAudio: () => setNoAudioDismissed(true),
+    // Text-sync props (preserved from fork)
+    onEnterSync: handleEnterSync,
+    syncMode: textSync.syncMode,
+    syncApi: textSync,
+    syncToast,
+    onSyncPlayPause: playPauseToggle,
+  };
+  return (
+    <main
+      ref={stageRef}
+      data-compass-player
+      data-detached={src.pipDocked || undefined}
+      inert={src.pipDocked || undefined}
+      data-docked={docked}
+      data-native-dock={nativeDock}
+      data-audio-only={docked && dockMinimized}
+      dir="ltr"
+      className={`fixed z-[100] overflow-hidden ${docked ? "sports-player-dock" : "inset-0"} ${stageBg}`}
+      style={{ ...(screenLocked ? { cursor: "default" } : cursorStyle), ...dockDrag.style, ...(src.pipDocked ? { visibility: "hidden", pointerEvents: "none" } : {}) }}
+      onMouseMove={wakeChrome}
+      onMouseEnter={wakeChrome}
+    >
+      <div
+        ref={videoMountRef}
+        data-player-video-mount
+        className="absolute inset-0"
+        onPointerDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (
+            e.pointerType !== "mouse" ||
+            !e.isPrimary ||
+            e.button !== 0 ||
+            drawMode ||
+            pipMode ||
+            screenLocked
+          ) {
+            return;
+          }
+          const hold = mouseHoldRef.current;
+          if (hold.pointerId != null) return;
+          const pointerId = e.pointerId;
+          hold.pointerId = pointerId;
+          hold.baseRate = snapRef.current.rate;
+          const stage = e.currentTarget;
+          hold.timer = window.setTimeout(() => {
+            hold.timer = null;
+            if (hold.pointerId !== pointerId || snapRef.current.status !== "playing") return;
+            hold.engaged = true;
+            try {
+              stage.setPointerCapture(pointerId);
+            } catch {
+              hold.pointerId = null;
+              hold.engaged = false;
+              return;
+            }
+            setMouseHoldSpeedActive(true);
+            bridgeRef.current?.setRate(Math.max(2, hold.baseRate));
+          }, 350);
+        }}
+        onPointerUp={(e) => {
+          if (mouseHoldRef.current.pointerId !== e.pointerId) return;
+          releaseMouseHoldSpeed(true);
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+        }}
+        onPointerCancel={(e) => {
+          if (mouseHoldRef.current.pointerId === e.pointerId) releaseMouseHoldSpeed(false);
+        }}
+        onLostPointerCapture={(e) => {
+          if (mouseHoldRef.current.pointerId === e.pointerId) releaseMouseHoldSpeed(false);
+        }}
+        onClick={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (drawMode || pipMode) return;
+          if (suppressMouseClickRef.current) {
+            suppressMouseClickRef.current = false;
+            if (suppressMouseClickTimerRef.current != null) {
+              window.clearTimeout(suppressMouseClickTimerRef.current);
+              suppressMouseClickTimerRef.current = null;
+            }
+            return;
+          }
+          if (dismissedJustNow()) {
+            clearOverlayDismiss();
+            return;
+          }
+          const resuming = snap.status !== "playing";
+          playPauseToggle();
+          if (resuming) hideForResume();
+        }}
+      />
+      {docked && (
+        <SportsDockControls
+          dragHandlers={dockDrag.handlers}
+          src={src}
+          snap={snap}
+          bridge={bridgeRef.current}
+          minimized={dockMinimized}
+          onMinimize={() => setDockMinimized((value) => !value)}
+          onPlayPause={playPauseToggle}
+          onClose={() => void closePlayer()}
+          onExpand={() => {
+            setDockMinimized(false);
+            replacePlayerSrc({ ...src, sportsDocked: false });
+          }}
+          onFullscreen={() => {
+            setDockMinimized(false);
+            replacePlayerSrc({ ...src, sportsDocked: false });
+            toggleFullscreen();
+          }}
+        />
+      )}
+      {!docked && !hdrStageActive && <PlayerOverlayLayers {...overlayProps} />}
+      {!docked && !hdrStageActive && (
+        <PlayerInteractionLockControls
+          enabled={screenLockEnabled}
+          locked={screenLocked}
+          visible={screenLocked ? screenLockControlsVisible : showChrome}
+          binding={screenLockBinding}
+          onLock={lockScreen}
+          onUnlock={unlockScreen}
+        />
+      )}
+      {stillPrompt && (
+        <StillWatchingPrompt
+          show={src.meta.name ?? ""}
+          nextLabel={
+            src.meta.type === "series"
+              ? `S${stillPrompt.season} E${stillPrompt.episode}`
+              : undefined
+          }
+          onContinue={continueWatching}
+          onExit={stopWatching}
+        />
+      )}
+      {sourceError && !docked && (
+        <SourceErrorCard
+          error={sourceError}
+          onChoose={() => {
+            clearSourceError();
+            openPicker(src.meta, src.episode, { autoPlay: false });
+          }}
+          onRetry={() => {
+            clearSourceError();
+            openPicker(src.meta, src.episode, { autoPlay: true });
+          }}
+        />
+      )}
+      {!tenFoot && <LeaveConfirmModal />}
+      <HdrStageBridge
+        active={hdrStageRequested}
+        payload={{
+          snap,
+          src,
+          shellId: settings.playerShellId,
+          engine,
+          visible: showChrome,
+          fullscreen,
+          resolvedImdbId,
+          tmdbKey: settings.tmdbKey ?? null,
+          canChangeEpisode,
+          hasPrevEp: hasPrevEpisodeNow,
+          hasNextEp: hasNextEpisodeNow,
+          pipMode,
+          screenLocked,
+          screenLockEnabled,
+          screenLockControlsVisible,
+          screenLockBinding,
+        }}
+        handlers={{
+          playPause: playPauseToggle,
+          fullscreen: toggleFullscreen,
+          seek: seekTo,
+          seekStep,
+          rememberSub: rememberSubChoice,
+          setSubtitleTrack: (id) => bridgeRef.current?.setSubtitleTrack(id),
+          setSecondarySubtitleTrack: (id) => bridgeRef.current?.setSecondarySubtitleTrack(id),
+          addSubtitle: (url, lang, title, select, metadata) =>
+            bridgeRef.current?.addSubtitle(url, lang, title, select, metadata) ??
+            Promise.resolve(false),
+          pip: togglePipMode,
+          cast: () => cast.openCastMenu(null),
+          back: backFromPlayer,
+          prevEp: playPrev,
+          nextEp: playNext,
+          pickAnother: pickAnotherOrGuide,
+          screenshot: () => frameGrab.trigger(),
+          menuOpen: setAnyMenuOpen,
+          activity: () => {
+            wakeChrome();
+            if (screenLocked) wakeScreenLockControls();
+          },
+          lock: lockScreen,
+          unlock: unlockScreen,
+        }}
+      />
+    </main>
+  );
+}

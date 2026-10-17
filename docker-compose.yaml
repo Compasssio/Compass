@@ -1,0 +1,17 @@
+services:
+  compass-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: compass-web
+    restart: unless-stopped
+    ports:
+      - "1420:1420"
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - .:/app
+      - /app/node_modules
+    tty: true
+    stdin_open: true

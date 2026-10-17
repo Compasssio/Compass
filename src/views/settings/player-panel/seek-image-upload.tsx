@@ -1,0 +1,253 @@
+import { Image as ImageIcon, Loader2, Upload, X } from "../icons";
+import { useRef, useState } from "react";
+import { t, useT } from "@/lib/i18n";
+import { ROW_ACTION } from "../kit";
+import { RowNote } from "../shared";
+
+const ACCEPTED_TYPES = "image/png,image/gif,image/webp,image/jpeg,image/svg+xml,.svg";
+const MAX_GIF_SIZE = 2 * 1024 * 1024;
+const MAX_SVG_SIZE = 512 * 1024;
+const MAX_RASTER_SOURCE = 16 * 1024 * 1024;
+const MAX_STORED_BYTES = 1.5 * 1024 * 1024;
+
+type Result = { url: string } | { error: string };
+
+export function SeekImageUpload({
+  value,
+  onSelect,
+  onClear,
+  targetDim = 512,
+  targetQuality = 0.9,
+}: {
+  value: string;
+  onSelect: (dataUrl: string) => void;
+  onClear: () => void;
+  targetDim?: number;
+  targetQuality?: number;
+}) {
+  const tr = useT();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onFile = async (file: File) => {
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await processSeekImage(file, targetDim, targetQuality);
+      if ("error" in result) {
+        setError(result.error);
+        return;
+      }
+      onSelect(result.url);
+    } catch (e) {
+      console.warn("[seek-image] processing failed", e);
+      setError(tr("Couldn't read that image. Try a different file."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-2.5">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-elevated">
+          <ImageIcon
+            size={20}
+            strokeWidth={1.6}
+            className={`absolute text-ink-subtle transition duration-300 ${
+              value ? "scale-50 opacity-0" : "scale-100 opacity-100"
+            }`}
+          />
+          <img
+            key={value || "empty"}
+            src={
+              value || "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+            }
+            alt=""
+            className={`h-12 w-12 object-contain transition duration-300 ease-out ${
+              value ? "translate-y-0 scale-100 opacity-100" : "translate-y-2 scale-75 opacity-0"
+            }`}
+          />
+          {busy && (
+            <div className="absolute inset-0 flex items-center justify-center bg-canvas/60">
+              <Loader2 size={16} className="animate-spin text-ink-muted" />
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          aria-disabled={busy}
+          onClick={busy ? undefined : () => fileInputRef.current?.click()}
+          className={`${ROW_ACTION}${busy ? " pointer-events-none opacity-45" : ""}`}
+        >
+          <Upload size={16} strokeWidth={2.2} />
+          {busy ? tr("Processing") : value ? tr("Replace") : tr("Upload")}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            onClear();
+          }}
+          disabled={!value}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] border border-edge-soft bg-elevated text-ink-muted transition duration-200 hover:border-danger/40 hover:text-danger disabled:pointer-events-none disabled:scale-90 disabled:opacity-0"
+          aria-label={tr("Remove image")}
+        >
+          <X size={17} strokeWidth={2.2} />
+        </button>
+      </div>
+      {error && <RowNote>{error}</RowNote>}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPTED_TYPES}
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void onFile(f);
+          e.target.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
+export function openSeekImageDialog(setBusy?: (b: boolean) => void): Promise<string | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ACCEPTED_TYPES;
+    input.onchange = async () => {
+      const f = input.files?.[0];
+      if (!f) return resolve(null);
+      setBusy?.(true);
+      try {
+        const r = await processSeekImage(f, 512, 0.9);
+        resolve("url" in r ? r.url : null);
+      } finally {
+        setBusy?.(false);
+      }
+    };
+    input.click();
+  });
+}
+
+async function processSeekImage(file: File, maxDim: number, quality: number): Promise<Result> {
+  const lowerName = file.name.toLowerCase();
+  const isSvg = file.type === "image/svg+xml" || lowerName.endsWith(".svg");
+  const isGif = file.type === "image/gif" || lowerName.endsWith(".gif");
+
+  if (isSvg) {
+    if (file.size > MAX_SVG_SIZE) {
+      return {
+        error: t(
+          "That SVG is {size} (max 512 KB). Optimize it at svgomg or save it smaller and try again.",
+          {
+            size: formatBytes(file.size),
+          },
+        ),
+      };
+    }
+    const text = await file.text();
+    const utf8 = unescape(encodeURIComponent(text));
+    return { url: `data:image/svg+xml;base64,${btoa(utf8)}` };
+  }
+
+  if (isGif) {
+    if (file.size > MAX_GIF_SIZE) {
+      return {
+        error: t(
+          "Animated GIFs are kept as-is to preserve animation, but this one is {size} and the cap is 2 MB. Try a shorter or lower-frame-rate version.",
+          {
+            size: formatBytes(file.size),
+          },
+        ),
+      };
+    }
+    const url = await readAsDataUrl(file);
+    return { url };
+  }
+
+  if (file.size > MAX_RASTER_SOURCE) {
+    return {
+      error: t("That file is {size}. Source images need to be under 16 MB before resizing.", {
+        size: formatBytes(file.size),
+      }),
+    };
+  }
+
+  const sourceUrl = await readAsDataUrl(file);
+  const downsized = await downsizeRaster(sourceUrl, maxDim, quality);
+  if (!downsized) return { error: t("Couldn't read that image. Try a PNG, JPEG, or WebP.") };
+  if (downsized.length > MAX_STORED_BYTES) {
+    const tighter = await downsizeRaster(sourceUrl, Math.round(maxDim / 2), 0.82);
+    if (tighter && tighter.length <= MAX_STORED_BYTES) return { url: tighter };
+    return {
+      error: t(
+        "Even after auto-shrinking this image is still too big to store. Try one with a tighter crop.",
+      ),
+    };
+  }
+  return { url: downsized };
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("FileReader returned non-string"));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function downsizeRaster(
+  dataUrl: string,
+  maxDim: number,
+  quality: number,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        if (!w || !h) {
+          resolve(null);
+          return;
+        }
+        const scale = Math.min(1, maxDim / Math.max(w, h));
+        const tw = Math.max(16, Math.round(w * scale));
+        const th = Math.max(16, Math.round(h * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = tw;
+        canvas.height = th;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, tw, th);
+        const webp = canvas.toDataURL("image/webp", quality);
+        if (webp.startsWith("data:image/webp")) {
+          resolve(webp);
+          return;
+        }
+        resolve(canvas.toDataURL("image/png"));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${n} B`;
+}
