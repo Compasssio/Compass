@@ -56,6 +56,14 @@ foreach ($lock in @(@{ File = 'src-tauri/Cargo.lock'; Name = 'compass' }, @{ Fil
   Write-Host "  ok  $($lock.File) ($($lock.Name))"
 }
 
+Step 'Updater signing key'
+$keyPath = if ($env:COMPASS_UPDATER_KEY) { $env:COMPASS_UPDATER_KEY } else { Join-Path $env:USERPROFILE '.compass\updater.key' }
+if (-not (Test-Path -LiteralPath $keyPath)) { Fail "No updater signing key at $keyPath" }
+# tauri build signs the updater artifacts itself, so the key must be set before it runs.
+$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -LiteralPath $keyPath -Raw).Trim()
+if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = '' }
+Write-Host "  ok  key loaded from $keyPath"
+
 if (-not $SkipApp) {
   Step 'App build'
   Run 'pnpm' @('tauri', 'build')
@@ -76,11 +84,15 @@ Run 'cargo' @('build', '--manifest-path', 'installer/src-tauri/Cargo.toml', '--r
   '--features', 'tauri/custom-protocol', '--bin', 'compass-setup', '--locked')
 Run 'node' @('scripts/verify-managed-payload.mjs', '--embedded')
 
+# Cargo writes to CARGO_TARGET_DIR when set, else to each crate's own target/.
+$appRelease = if ($env:CARGO_TARGET_DIR) { Join-Path $env:CARGO_TARGET_DIR 'release' } else { 'src-tauri/target/release' }
+$setupRelease = if ($env:CARGO_TARGET_DIR) { Join-Path $env:CARGO_TARGET_DIR 'release' } else { 'installer/src-tauri/target/release' }
+
 Step 'Executable versions'
 $exes = @(
-  'src-tauri/target/release/compass.exe',
-  'installer/src-tauri/target/release/compass-uninstall.exe',
-  'installer/src-tauri/target/release/compass-setup.exe'
+  (Join-Path $appRelease 'compass.exe'),
+  (Join-Path $setupRelease 'compass-uninstall.exe'),
+  (Join-Path $setupRelease 'compass-setup.exe')
 )
 foreach ($exe in $exes) {
   if (-not (Test-Path -LiteralPath $exe)) { Fail "Missing $exe" }
@@ -92,11 +104,11 @@ foreach ($exe in $exes) {
 Step 'Stage artifacts'
 $stage = Join-Path $StageRoot $version
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
-$setup = "src-tauri/target/release/bundle/nsis/Compass_${version}_x64-setup.exe"
+$setup = Join-Path $appRelease "bundle/nsis/Compass_${version}_x64-setup.exe"
 if (-not (Test-Path -LiteralPath $setup)) { Fail "Missing NSIS bundle $setup" }
 $staged = @{
   "Compass_${version}_x64-setup.exe"     = $setup
-  "Compass_${version}_x64-installer.exe" = 'installer/src-tauri/target/release/compass-setup.exe'
+  "Compass_${version}_x64-installer.exe" = (Join-Path $setupRelease 'compass-setup.exe')
 }
 foreach ($name in $staged.Keys) {
   Copy-Item -LiteralPath $staged[$name] -Destination (Join-Path $stage $name) -Force
@@ -104,10 +116,6 @@ foreach ($name in $staged.Keys) {
 }
 
 Step 'Sign (each exe gets its own signature)'
-$keyPath = Join-Path $env:USERPROFILE '.tauri\compass-updater.key'
-if (-not (Test-Path -LiteralPath $keyPath)) { Fail "No updater signing key at $keyPath" }
-$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -LiteralPath $keyPath -Raw).Trim()
-if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = '' }
 foreach ($name in $staged.Keys) {
   $target = Join-Path $stage $name
   Remove-Item -LiteralPath "$target.sig" -Force -ErrorAction SilentlyContinue
@@ -131,7 +139,7 @@ if (-not $env:COMPASS_THEMES_ADMIN_TOKEN) {
   if (-not (Test-Path -LiteralPath $envFile)) { Fail "No admin token: set COMPASS_THEMES_ADMIN_TOKEN or create $envFile" }
   foreach ($line in Get-Content -LiteralPath $envFile) {
     if ($line -match '^\s*([A-Z0-9_]+)\s*=\s*(.*)$') {
-      Set-Item -Path "env:$($Matches[1])" -Value $Matches[2].Trim()
+      Set-Item -Path "env:$($Matches[1])" -Value $Matches[2].Trim().Trim('"', "'")
     }
   }
 }

@@ -12,13 +12,17 @@ const STAGE = join(INSTALLER, 'payload-stage');
 const OUT_DIR = join(SETUP, 'payload');
 const OUT = join(OUT_DIR, 'compass-payload.zip');
 
-const UNINSTALLER = join(SETUP, 'target', 'release', 'compass-uninstall.exe');
+// Cargo writes to CARGO_TARGET_DIR when set, else to each crate's own target/.
+const SHARED_TARGET = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : null;
+const APP_RELEASE = SHARED_TARGET ? join(SHARED_TARGET, 'release') : join(APP, 'target', 'release');
+const SETUP_RELEASE = SHARED_TARGET ? join(SHARED_TARGET, 'release') : join(SETUP, 'target', 'release');
+const UNINSTALLER = join(SETUP_RELEASE, 'compass-uninstall.exe');
 const UNINSTALLER_CEILING = 60 * 1048576;
 const BUILD_UNINSTALLER =
   'cd installer/src-tauri && cargo build --release --no-default-features --bin compass-uninstall';
 
 const FILES = [
-  [join(APP, 'target', 'release', 'compass.exe'), 'compass.exe'],
+  [join(APP_RELEASE, 'compass.exe'), 'compass.exe'],
   [join(APP, 'THIRD-PARTY-NOTICES.txt'), 'notices'],
   [join(APP, 'binaries', 'mpv-x86_64-pc-windows-msvc.exe'), 'mpv.exe'],
   [join(APP, 'binaries', 'ffmpeg-x86_64-pc-windows-msvc.exe'), 'ffmpeg.exe'],
